@@ -1,0 +1,45 @@
+{
+  "name": "scopecraft",
+  "version": "0.1.0",
+  "description": "An educational patent-claim drafting game with examination, amendment, and design-around challenges.",
+  "private": true,
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Jacoba1100254352/patentpractice.jacobdanderson.net.git"
+  },
+  "homepage": "https://github.com/Jacoba1100254352/patentpractice.jacobdanderson.net#readme",
+  "bugs": {
+    "url": "https://github.com/Jacoba1100254352/patentpractice.jacobdanderson.net/issues"
+  },
+  "engines": {
+    "node": "^22.22.2 || ^24.15.0 || >=26.0.0"
+  },
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build && node scripts/prepare-sites-build.mjs",
+    "preview": "vite preview",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "check": "npm run test && npm run build && npm run test:sites",
+    "test:sites": "node --test tests/sites-worker.test.mjs"
+  },
+  "dependencies": {
+    "@fontsource/inter": "^5.3.0",
+    "@fontsource/source-serif-4": "^5.3.0",
+    "@phosphor-icons/react": "^2.1.10",
+    "idb": "^8.0.3",
+    "react": "19.2.0",
+    "react-dom": "19.2.0"
+  },
+  "devDependencies": {
+    "@testing-library/jest-dom": "^7.0.1",
+    "@testing-library/react": "^16.3.2",
+    "@testing-library/user-event": "^14.6.6",
+    "@vitejs/plugin-react": "5.0.4",
+    "axe-core": "^4.13.0",
+    "jsdom": "^30.0.1",
+    "vite": "6.4.3",
+    "vitest": "^4.1.11"
+  }
+}
