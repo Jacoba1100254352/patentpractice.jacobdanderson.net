@@ -44,13 +44,33 @@ npm ci
 npm run dev
 ```
 
+## Build and host anywhere
+
+```sh
+npm run build
+```
+
+`dist/client` is ScopeCraft's canonical portable artifact. It contains the complete static application, guide-route shells, fonts, and downloadable practice library. Copy that directory as a unit to any static host. The normal build does not require `.openai/`, `worker/`, an OpenAI Sites project ID, authentication, or hosted runtime services.
+
+For Nginx, point the document root at the deployed `dist/client` directory and fall back to `/index.html` for application routes. An example is included at `deploy/nginx.conf.example`. Serve the application at the origin root, because its generated asset and guide links use root-relative URLs. Hashed files under `/assets/` may use a long immutable cache lifetime. Keep `index.html`, the guide-route shells, and the stable-name download on a short cache lifetime so new releases appear promptly.
+
+### Optional OpenAI Sites mirror
+
+The Sites deployment is an optional preview or mirror, not a requirement of the application. When `.openai/hosting.json` and `worker/index.js` are present, prepare its additional adapter files with:
+
+```sh
+npm run build:sites
+```
+
+That command first creates the same portable `dist/client` artifact, then adds `dist/server/index.js` and `dist/.openai/hosting.json` for Sites packaging. Those adapter files are not part of the portable application and the browser client does not rely on Sites headers, authentication routes, D1, R2, or worker runtime APIs.
+
 ## Verify
 
 ```sh
 npm run check
 ```
 
-The check runs the automated test suite, creates a production build, and validates the included static-hosting worker.
+The check runs the application tests, proves a standalone build succeeds in an isolated copy with the Sites folders removed, checks the documented Nginx routing contract, and validates the optional Sites build and worker.
 
 ## Claim-editor keyboard controls
 

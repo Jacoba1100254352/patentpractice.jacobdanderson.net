@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
-import { access } from "node:fs/promises";
+import { access, readFile } from "node:fs/promises";
 import test from "node:test";
-import worker from "../worker/index.js";
+import worker from "../dist/server/index.js";
+
+import { guides } from "../src/guides/catalog.js";
 
 test("serves existing static assets without a fallback", async () => {
   const calls = [];
@@ -84,10 +86,18 @@ test("does not turn missing API or write requests into the app shell", async () 
   }
 });
 
-test("emits the files required by Sites packaging", async () => {
-  await access(new URL("../dist/client/index.html", import.meta.url));
+test("emits the optional files required by Sites packaging", async () => {
+  const rootShell = await readFile(new URL("../dist/client/index.html", import.meta.url));
   await access(new URL("../dist/client/guides/index.html", import.meta.url));
-  await access(new URL("../dist/client/guides/dependent-claims/index.html", import.meta.url));
+  assert.deepEqual(
+    await readFile(new URL("../dist/client/guides/index.html", import.meta.url)),
+    rootShell,
+  );
+  for (const guide of guides) {
+    const guideShell = new URL(`../dist/client/guides/${guide.slug}/index.html`, import.meta.url);
+    await access(guideShell);
+    assert.deepEqual(await readFile(guideShell), rootShell);
+  }
   await access(new URL("../dist/server/index.js", import.meta.url));
   await access(new URL("../dist/.openai/hosting.json", import.meta.url));
   await access(
@@ -95,5 +105,14 @@ test("emits the files required by Sites packaging", async () => {
       "../dist/client/downloads/patent-drafting-practice-library-expanded.zip",
       import.meta.url,
     ),
+  );
+
+  assert.equal(
+    await readFile(new URL("../dist/server/index.js", import.meta.url), "utf8"),
+    await readFile(new URL("../worker/index.js", import.meta.url), "utf8"),
+  );
+  assert.deepEqual(
+    JSON.parse(await readFile(new URL("../dist/.openai/hosting.json", import.meta.url), "utf8")),
+    JSON.parse(await readFile(new URL("../.openai/hosting.json", import.meta.url), "utf8")),
   );
 });
