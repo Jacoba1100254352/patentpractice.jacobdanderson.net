@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowRight,
+  BookOpen,
   CheckCircle,
   CloudCheck,
   Columns,
@@ -23,6 +24,7 @@ import {
 import { AppNavigation } from "./components/AppNavigation.jsx";
 import { ClaimEditor } from "./components/ClaimEditor.jsx";
 import { DisclosurePanel } from "./components/DisclosurePanel.jsx";
+import { GuideLibrary } from "./components/GuideLibrary.jsx";
 import { InspectorPanel } from "./components/InspectorPanel.jsx";
 import { LifecycleStepper } from "./components/LifecycleStepper.jsx";
 import { Modal } from "./components/Modal.jsx";
@@ -165,7 +167,7 @@ function ReferenceContent({ reference, evidence }) {
   );
 }
 
-function HelpContent({ challenge }) {
+function HelpContent({ challenge, onOpenGuides }) {
   return (
     <div className="modal-prose">
       <p>{challenge.educationalBoundary.full}</p>
@@ -175,8 +177,15 @@ function HelpContent({ challenge }) {
           <ul>{items.map((item) => <li key={item}>{item}</li>)}</ul>
         </section>
       ))}
+      <button type="button" className="secondary-button" onClick={onOpenGuides}>
+        <BookOpen size={15} aria-hidden="true" /> Open full drafting guides
+      </button>
     </div>
   );
+}
+
+function currentPathname() {
+  return globalThis.location?.pathname ?? "/";
 }
 
 function ClaimReview({ original, amended }) {
@@ -209,6 +218,7 @@ export function App() {
   const [navCollapsed, setNavCollapsed] = useState(false);
   const [ghostTextEnabled, setGhostTextEnabled] = useState(true);
   const [modal, setModal] = useState(null);
+  const [pathname, setPathname] = useState(currentPathname);
   const [mappingChoice, setMappingChoice] = useState("");
   const [activeNavId, setActiveNavId] = useState("draft");
   const [storageState, setStorageState] = useState({ ready: false, backend: null });
@@ -217,6 +227,22 @@ export function App() {
   const freshRequestedRef = useRef(
     new URLSearchParams(globalThis.location?.search ?? "").has("fresh"),
   );
+  const isGuideRoute = pathname === "/guides" || pathname.startsWith("/guides/");
+
+  const navigate = useCallback((nextPath, { replace = false } = {}) => {
+    if (globalThis.history && currentPathname() !== nextPath) {
+      const method = replace ? "replaceState" : "pushState";
+      globalThis.history[method](globalThis.history.state, "", nextPath);
+    }
+    setPathname(nextPath);
+    setModal(null);
+  }, []);
+
+  useEffect(() => {
+    const handlePopState = () => setPathname(currentPathname());
+    globalThis.addEventListener?.("popstate", handlePopState);
+    return () => globalThis.removeEventListener?.("popstate", handlePopState);
+  }, []);
 
   const store = useMemo(
     () => createAttemptStore({
@@ -591,6 +617,12 @@ export function App() {
   };
 
   const handleNav = (id) => {
+    if (id === "playbook") {
+      setActiveNavId(id);
+      navigate("/guides");
+      return;
+    }
+    if (isGuideRoute) navigate("/");
     setActiveNavId(id);
     if (id === "draft") {
       if (attempt.phase === "briefing") startDrafting();
@@ -620,7 +652,7 @@ export function App() {
       } else setModal({ type: "references" });
       return;
     }
-    if (id === "playbook" || id === "help") {
+    if (id === "help") {
       setModal({ type: "help" });
       return;
     }
@@ -692,7 +724,15 @@ export function App() {
   );
 
   let stageContent;
-  if (attempt.phase === "briefing") {
+  if (isGuideRoute) {
+    stageContent = (
+      <GuideLibrary
+        pathname={pathname}
+        onNavigate={navigate}
+        onBackToPractice={() => navigate("/")}
+      />
+    );
+  } else if (attempt.phase === "briefing") {
     stageContent = <BriefingScreen challenge={playerChallenge} modeId={modeId} onModeChange={setModeId} onStart={startDrafting} />;
   } else if (["drafting", "preflight", "response"].includes(attempt.phase)) {
     stageContent = (
@@ -774,7 +814,14 @@ export function App() {
   const modalBody = (() => {
     if (!modal) return null;
     if (modal.type === "reference") return <ReferenceContent reference={modal.reference} evidence={modal.evidence} />;
-    if (modal.type === "help") return <HelpContent challenge={playerChallenge} />;
+    if (modal.type === "help") {
+      return (
+        <HelpContent
+          challenge={playerChallenge}
+          onOpenGuides={() => navigate("/guides")}
+        />
+      );
+    }
     if (modal.type === "boundary") return <p>{playerChallenge.educationalBoundary.full}</p>;
     if (modal.type === "disclosure") return <div className="modal-prose">{playerChallenge.disclosure.sections.map((section) => <section key={section.id}><h3>{section.title}</h3><p>{section.body}</p></section>)}</div>;
     if (modal.type === "references") return <ul className="modal-reference-list">{playerChallenge.priorArt.cards.map((reference) => <li key={reference.id}><button type="button" onClick={() => openEvidence(reference)}><strong>{reference.label}: {reference.title}</strong><span>{reference.publicationNumber}</span></button></li>)}</ul>;
@@ -828,37 +875,50 @@ export function App() {
   }[modal?.type] ?? "ScopeCraft";
 
   return (
-    <div className="app-shell" data-nav-collapsed={navCollapsed}>
+    <div className="app-shell" data-nav-collapsed={navCollapsed} data-view={isGuideRoute ? "guides" : "practice"}>
       <header className="topbar">
         <div className="brand">ScopeCraft</div>
         <div className="challenge-title">
           <Scales size={17} color="var(--accent)" aria-hidden="true" />
-          <span>Challenge 01 · {challenge01PlayerFacing.metadata.title}</span>
+          <span>{isGuideRoute ? "Drafting Guides · U.S. utility practice" : `Challenge 01 · ${challenge01PlayerFacing.metadata.title}`}</span>
         </div>
-        <LifecycleStepper currentPhase={attempt.phase} onNavigate={reviewLifecycleStage} />
+        {isGuideRoute ? <span /> : <LifecycleStepper currentPhase={attempt.phase} onNavigate={reviewLifecycleStage} />}
         <div className="top-actions">
-          <span className="autosave-status" title={`Storage: ${storageState.backend ?? "initializing"}`}>
-            {attempt.persistence.dirty ? <FloppyDisk size={14} aria-hidden="true" /> : <CloudCheck size={14} aria-hidden="true" />}
-            {attempt.persistence.dirty ? "Saving locally" : storageState.ready ? "Saved locally" : "Opening local save"}
-          </span>
-          <button type="button" className="icon-button" onClick={saveNow} aria-label="Save attempt now" title="Save now"><FloppyDisk size={17} aria-hidden="true" /></button>
-          <button type="button" className="icon-button" onClick={exportAttempt} aria-label="Export attempt" title="Export attempt"><DownloadSimple size={17} aria-hidden="true" /></button>
+          {isGuideRoute ? (
+            <button type="button" className="quiet-button" onClick={() => navigate("/")}>
+              Return to practice
+            </button>
+          ) : (
+            <>
+              <span className="autosave-status" title={`Storage: ${storageState.backend ?? "initializing"}`}>
+                {attempt.persistence.dirty ? <FloppyDisk size={14} aria-hidden="true" /> : <CloudCheck size={14} aria-hidden="true" />}
+                {attempt.persistence.dirty ? "Saving locally" : storageState.ready ? "Saved locally" : "Opening local save"}
+              </span>
+              <button type="button" className="icon-button" onClick={saveNow} aria-label="Save attempt now" title="Save now"><FloppyDisk size={17} aria-hidden="true" /></button>
+              <button type="button" className="icon-button" onClick={exportAttempt} aria-label="Export attempt" title="Export attempt"><DownloadSimple size={17} aria-hidden="true" /></button>
+            </>
+          )}
         </div>
       </header>
 
       <div className="application-body">
-        <AppNavigation activeId={activeNavId} onNavigate={handleNav} modeLabel={MODE_LABELS[modeId]} />
+        <AppNavigation activeId={isGuideRoute ? "playbook" : activeNavId} onNavigate={handleNav} modeLabel={MODE_LABELS[modeId]} />
         <main className="main-stage">
           <div className="stage-topline">
-            <p className="stage-kicker">{attempt.phase.replaceAll("-", " ")}</p>
-            <h1 className="stage-title">{STAGE_TITLES[attempt.phase]}</h1>
+            <p className="stage-kicker">{isGuideRoute ? "resources" : attempt.phase.replaceAll("-", " ")}</p>
+            {isGuideRoute ? <p className="stage-title">Drafting guides</p> : <h1 className="stage-title">{STAGE_TITLES[attempt.phase]}</h1>}
             <span className="spacer" />
-            {attempt.phase === "office-action" ? <button type="button" className="quiet-button" onClick={openMappingChallenge}><ListMagnifyingGlass size={15} aria-hidden="true" /> Challenge mapping</button> : null}
-            {["drafting", "preflight", "response"].includes(attempt.phase) ? (
+            {!isGuideRoute && attempt.phase === "office-action" ? <button type="button" className="quiet-button" onClick={openMappingChallenge}><ListMagnifyingGlass size={15} aria-hidden="true" /> Challenge mapping</button> : null}
+            {!isGuideRoute && ["drafting", "preflight", "response"].includes(attempt.phase) ? (
               <>
                 <button type="button" className="quiet-button rail-toggle" onClick={toggleEvidence} aria-pressed={!evidenceCollapsed}><Columns size={15} aria-hidden="true" /> Evidence</button>
                 <button type="button" className="quiet-button rail-toggle" onClick={toggleInspector} aria-pressed={!inspectorCollapsed}><SidebarSimple size={15} aria-hidden="true" /> Inspector</button>
               </>
+            ) : null}
+            {!isGuideRoute ? (
+              <button type="button" className="quiet-button guide-mobile-entry" onClick={() => navigate("/guides")}>
+                <BookOpen size={15} aria-hidden="true" /> Guides
+              </button>
             ) : null}
             <span className="legal-boundary"><Info size={13} aria-hidden="true" /> Educational simulation, not legal advice</span>
           </div>

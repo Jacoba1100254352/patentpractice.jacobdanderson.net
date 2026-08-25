@@ -14,12 +14,18 @@ ScopeCraft is an educational patent-claim drafting game. It turns a fictional in
 - One Office Action response and amendment round
 - A design-around prediction exercise
 - A scored portfolio debrief
+- A searchable drafting-guide library with concise workflows, examples, and checklists
+- A downloadable, expanded practice library containing editable guides and worksheets
 - Local browser persistence and JSON export
 - Responsive desktop, tablet, and mobile layouts
 
 Challenge 01 uses a fictional pressure-history adaptive mouse disclosure and links to public patent documents as frozen exercise references. The application stipulates reference availability solely for gameplay and does not ask players to determine statutory prior-art dates. Reference summaries are paraphrased and the repository does not embed full patent PDFs.
 
 The current release contains one challenge. Evaluator rules, mappings, and target embodiments ship with the client-side source, so concealed material is a learning-interface mechanic rather than anti-cheat security.
+
+## Drafting guides
+
+The in-app Guides area covers application workflow, independent and dependent claims, Summary drafting, figure narratives, claim-set restructuring, drafting language, and quick-reference checks. It separates official U.S. legal and procedural baselines from practice suggestions and hypothetical examples. The downloadable library is available from the Guides hub.
 
 ## Educational boundary
 

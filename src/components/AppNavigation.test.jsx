@@ -18,7 +18,7 @@ describe("AppNavigation", () => {
 
     const navigation = screen.getByRole("navigation", { name: "ScopeCraft tools" });
     const draft = screen.getByRole("button", { name: "Draft" });
-    const playbook = screen.getByRole("button", { name: "Playbook" });
+    const playbook = screen.getByRole("button", { name: "Guides" });
     expect(screen.getByRole("button", { name: "Examiner simulation" })).toBeInTheDocument();
     expect(navigation).toHaveAttribute("data-active-nav", "draft");
     expect(draft).toHaveAttribute("aria-current", "page");

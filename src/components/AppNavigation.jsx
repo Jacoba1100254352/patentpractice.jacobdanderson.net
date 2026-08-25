@@ -17,7 +17,7 @@ export const DEFAULT_NAV_ITEMS = Object.freeze([
   { id: "disclosure", label: "Disclosure", Icon: BookOpen },
   { id: "prior-art", label: "Prior Art", Icon: Stack },
   { id: "search", label: "Search", Icon: MagnifyingGlass },
-  { id: "playbook", label: "Playbook", Icon: BookBookmark, mobileHidden: true },
+  { id: "playbook", label: "Guides", Icon: BookBookmark, mobileHidden: true },
   { id: "examiner", label: "Examiner simulation", Icon: Sparkle },
   { id: "reports", label: "Reports", Icon: ChartBar, mobileHidden: true },
 ]);

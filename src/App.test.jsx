@@ -19,6 +19,7 @@ vi.mock("./persistence/attemptStore.js", () => ({
 
 afterEach(() => {
   cleanup();
+  globalThis.history.replaceState(null, "", "/");
   vi.clearAllMocks();
 });
 
@@ -136,5 +137,36 @@ describe("ScopeCraft playable application", () => {
     ).toBeInTheDocument();
     expect(screen.getByText(/limited to the ScopeCraft challenge record/iu)).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Portfolio score" })).toBeInTheDocument();
+  });
+
+  it("opens a guide directly and marks Guides as the active tool", async () => {
+    globalThis.history.replaceState(null, "", "/guides/dependent-claims");
+    const { container } = render(<App />);
+
+    expect(
+      await screen.findByRole("heading", { level: 1, name: /Dependent claims/iu }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Guides" })).toHaveAttribute("aria-current", "page");
+    expect(screen.queryByRole("heading", { name: "Pressure-History Adaptive Mouse" })).not.toBeInTheDocument();
+    await expectNoAxeViolations(container);
+  });
+
+  it("returns from Guides without losing the active claim draft", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+
+    await screen.findByText("Saved locally");
+    await user.click(screen.getByRole("button", { name: "Start drafting" }));
+    const limitation = await screen.findByLabelText("Claim 1, limitation 1");
+    await user.clear(limitation);
+    await user.type(limitation, "a pressure sensor producing a pressure signal");
+
+    await user.click(screen.getAllByRole("button", { name: "Guides" })[0]);
+    expect(globalThis.location.pathname).toBe("/guides");
+    expect(await screen.findByRole("heading", { level: 1, name: "Practical patent-drafting guides" })).toBeInTheDocument();
+
+    await user.click(screen.getAllByRole("link", { name: "Back to practice" })[0]);
+    expect(globalThis.location.pathname).toBe("/");
+    expect(await screen.findByDisplayValue("a pressure sensor producing a pressure signal")).toBeInTheDocument();
   });
 });
