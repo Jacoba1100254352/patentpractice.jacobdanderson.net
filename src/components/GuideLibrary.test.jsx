@@ -60,7 +60,7 @@ describe("Drafting guide library", () => {
 
     expect(screen.getByRole("heading", { level: 1, name: "Guide not found" })).toBeInTheDocument();
     await user.click(screen.getByRole("link", { name: /Browse all guides/iu }));
-    expect(onNavigate).toHaveBeenCalledWith("/guides");
+    expect(onNavigate).toHaveBeenCalledWith("/guides/");
     await expectNoAxeViolations(container);
   });
 });

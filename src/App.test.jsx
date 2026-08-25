@@ -162,7 +162,7 @@ describe("ScopeCraft playable application", () => {
     await user.type(limitation, "a pressure sensor producing a pressure signal");
 
     await user.click(screen.getAllByRole("button", { name: "Guides" })[0]);
-    expect(globalThis.location.pathname).toBe("/guides");
+    expect(globalThis.location.pathname).toBe("/guides/");
     expect(await screen.findByRole("heading", { level: 1, name: "Practical patent-drafting guides" })).toBeInTheDocument();
 
     await user.click(screen.getAllByRole("link", { name: "Back to practice" })[0]);

@@ -16,7 +16,7 @@ import {
   guides,
 } from "../guides/catalog.js";
 
-const GUIDE_INDEX_PATH = "/guides";
+const GUIDE_INDEX_PATH = "/guides/";
 const DOWNLOAD_PATH = "/downloads/patent-drafting-practice-library-expanded.zip";
 
 function normalizePathname(pathname) {
@@ -27,7 +27,7 @@ function normalizePathname(pathname) {
 
 function routeForPathname(pathname) {
   const path = normalizePathname(pathname);
-  if (path === GUIDE_INDEX_PATH) return { kind: "hub", slug: null };
+  if (path === GUIDE_INDEX_PATH.slice(0, -1)) return { kind: "hub", slug: null };
   const match = path.match(/^\/guides\/([^/]+)$/u);
   if (!match) return { kind: "not-found", slug: null };
 

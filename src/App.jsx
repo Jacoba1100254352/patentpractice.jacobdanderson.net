@@ -619,7 +619,7 @@ export function App() {
   const handleNav = (id) => {
     if (id === "playbook") {
       setActiveNavId(id);
-      navigate("/guides");
+      navigate("/guides/");
       return;
     }
     if (isGuideRoute) navigate("/");
@@ -818,7 +818,7 @@ export function App() {
       return (
         <HelpContent
           challenge={playerChallenge}
-          onOpenGuides={() => navigate("/guides")}
+          onOpenGuides={() => navigate("/guides/")}
         />
       );
     }
@@ -916,7 +916,7 @@ export function App() {
               </>
             ) : null}
             {!isGuideRoute ? (
-              <button type="button" className="quiet-button guide-mobile-entry" onClick={() => navigate("/guides")}>
+              <button type="button" className="quiet-button guide-mobile-entry" onClick={() => navigate("/guides/")}>
                 <BookOpen size={15} aria-hidden="true" /> Guides
               </button>
             ) : null}

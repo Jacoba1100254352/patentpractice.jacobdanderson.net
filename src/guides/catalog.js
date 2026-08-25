@@ -1290,6 +1290,6 @@ export function getGuideBySlug(slug) {
 }
 
 export function guideHref(slug, sectionId) {
-  const base = `/guides/${encodeURIComponent(slug)}`;
+  const base = `/guides/${encodeURIComponent(slug)}/`;
   return sectionId ? `${base}#${encodeURIComponent(sectionId)}` : base;
 }

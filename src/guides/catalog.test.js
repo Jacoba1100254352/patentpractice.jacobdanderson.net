@@ -20,7 +20,7 @@ describe("drafting guide catalog", () => {
       expect(guide.takeaway).toBeTruthy();
       expect(guide.sections.length).toBeGreaterThan(0);
       expect(guide.checklist.length).toBeGreaterThan(0);
-      expect(guideHref(guide.slug)).toBe(`/guides/${guide.slug}`);
+      expect(guideHref(guide.slug)).toBe(`/guides/${guide.slug}/`);
       expect(getGuideBySlug(guide.slug)).toBe(guide);
       expect(new Set(guide.sections.map((section) => section.id)).size).toBe(guide.sections.length);
 
