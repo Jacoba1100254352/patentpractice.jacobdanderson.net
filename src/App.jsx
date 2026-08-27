@@ -10,6 +10,7 @@ import {
   FloppyDisk,
   Info,
   ListMagnifyingGlass,
+  Printer,
   Scales,
   SidebarSimple,
   Sparkle,
@@ -17,6 +18,8 @@ import {
 } from "@phosphor-icons/react";
 
 import {
+  challengeCatalog,
+  challenge01CompatibilityHash,
   challenge01EvaluatorData,
   challenge01PlayerFacing,
   getChallenge01ForMode,
@@ -25,9 +28,11 @@ import { AppNavigation } from "./components/AppNavigation.jsx";
 import { ClaimEditor } from "./components/ClaimEditor.jsx";
 import { DisclosurePanel } from "./components/DisclosurePanel.jsx";
 import { GuideLibrary } from "./components/GuideLibrary.jsx";
+import { GuidedTourStep, QUICK_TOUR_STEPS } from "./components/GuidedTour.jsx";
 import { InspectorPanel } from "./components/InspectorPanel.jsx";
 import { LifecycleStepper } from "./components/LifecycleStepper.jsx";
 import { Modal } from "./components/Modal.jsx";
+import { PracticePrintPacket } from "./components/PracticePrintPacket.jsx";
 import {
   BriefingScreen,
   CompetitorScreen,
@@ -43,6 +48,15 @@ import {
   sortClaims,
 } from "./domain/claims.js";
 import {
+  buildAssignmentLink,
+  parseAssignmentLink,
+} from "./domain/assignmentLink.js";
+import {
+  PRINT_PACKET_TYPES,
+  availablePrintPacketTypes,
+  buildPlayerPrintModel,
+} from "./domain/playerPrintModel.js";
+import {
   createEngineChallenge,
   createStarterClaimSet,
   promoteDependentLimitations,
@@ -57,8 +71,12 @@ import { evaluateClaimSet, mapCompetitorToClaim } from "./engine/evaluator.js";
 import { runPreflight } from "./engine/preflight.js";
 import { scorePortfolio } from "./engine/scoring.js";
 import { createAttemptStore, exportAttemptState } from "./persistence/attemptStore.js";
+import {
+  hasCompletedQuickTour,
+  markQuickTourComplete,
+} from "./persistence/tourPreference.js";
 
-const CHALLENGE_HASH = "sha256:challenge01-v1.0.0";
+const CHALLENGE_HASH = challenge01CompatibilityHash;
 const ENGINE_VERSION = "1.0.0";
 const ENGINE_HASH = "sha256:scopecraft-engine-v1.0.0";
 
@@ -167,7 +185,7 @@ function ReferenceContent({ reference, evidence }) {
   );
 }
 
-function HelpContent({ challenge, onOpenGuides }) {
+function HelpContent({ challenge, onOpenGuides, onOpenTour }) {
   return (
     <div className="modal-prose">
       <p>{challenge.educationalBoundary.full}</p>
@@ -177,15 +195,38 @@ function HelpContent({ challenge, onOpenGuides }) {
           <ul>{items.map((item) => <li key={item}>{item}</li>)}</ul>
         </section>
       ))}
-      <button type="button" className="secondary-button" onClick={onOpenGuides}>
-        <BookOpen size={15} aria-hidden="true" /> Open full drafting guides
-      </button>
+      <div className="modal-action-row">
+        <button type="button" className="secondary-button" onClick={onOpenTour}>
+          Replay the quick tour
+        </button>
+        <button type="button" className="secondary-button" onClick={onOpenGuides}>
+          <BookOpen size={15} aria-hidden="true" /> Open full drafting guides
+        </button>
+      </div>
     </div>
   );
 }
 
 function currentPathname() {
   return globalThis.location?.pathname ?? "/";
+}
+
+function canonicalAssignmentSearch(assignment) {
+  if (!assignment?.valid) return "";
+  const params = new URLSearchParams({
+    challenge: assignment.challengeSlug,
+    mode: assignment.modeId,
+  });
+  return `?${params.toString()}`;
+}
+
+function focusBriefingStart() {
+  const focus = () => document.querySelector("[data-briefing-start]")?.focus();
+  if (typeof globalThis.requestAnimationFrame === "function") {
+    globalThis.requestAnimationFrame(focus);
+  } else {
+    globalThis.setTimeout(focus, 0);
+  }
 }
 
 function ClaimReview({ original, amended }) {
@@ -206,7 +247,11 @@ function ClaimReview({ original, amended }) {
 }
 
 export function App() {
-  const initialMode = "practitioner";
+  const [initialAssignment] = useState(() =>
+    parseAssignmentLink(globalThis.location?.search ?? "", challengeCatalog),
+  );
+  const assignmentRef = useRef(initialAssignment);
+  const initialMode = initialAssignment.valid ? initialAssignment.modeId : "practitioner";
   const [modeId, setModeId] = useState(initialMode);
   const [attempt, setAttempt] = useState(() => createAttempt(initialMode));
   const [selectedClaimId, setSelectedClaimId] = useState(null);
@@ -222,6 +267,12 @@ export function App() {
   const [mappingChoice, setMappingChoice] = useState("");
   const [activeNavId, setActiveNavId] = useState("draft");
   const [storageState, setStorageState] = useState({ ready: false, backend: null });
+  const [showFirstUseGuide, setShowFirstUseGuide] = useState(
+    () => !hasCompletedQuickTour(),
+  );
+  const [tourStep, setTourStep] = useState(0);
+  const [printPacketType, setPrintPacketType] = useState(PRINT_PACKET_TYPES.DRAFTING);
+  const [printModel, setPrintModel] = useState(null);
   const { toasts, announce } = useToasts();
   const hasHydrated = useRef(false);
   const freshRequestedRef = useRef(
@@ -230,9 +281,17 @@ export function App() {
   const isGuideRoute = pathname === "/guides" || pathname.startsWith("/guides/");
 
   const navigate = useCallback((nextPath, { replace = false } = {}) => {
-    if (globalThis.history && currentPathname() !== nextPath) {
+    const nextSearch = canonicalAssignmentSearch(assignmentRef.current);
+    if (
+      globalThis.history &&
+      (currentPathname() !== nextPath || (globalThis.location?.search ?? "") !== nextSearch)
+    ) {
       const method = replace ? "replaceState" : "pushState";
-      globalThis.history[method](globalThis.history.state, "", nextPath);
+      globalThis.history[method](
+        globalThis.history.state,
+        "",
+        `${nextPath}${nextSearch}`,
+      );
     }
     setPathname(nextPath);
     setModal(null);
@@ -266,6 +325,27 @@ export function App() {
     [modeId, playerChallenge],
   );
   const claimBudgetTotal = playerChallenge.activeMode.claimBudget.total;
+  const availablePrintPackets = useMemo(
+    () => availablePrintPacketTypes(attempt),
+    [attempt],
+  );
+  const assignmentNotice = useMemo(() => {
+    if (initialAssignment.status === "invalid") {
+      return {
+        tone: "warning",
+        title: "Assignment link needs attention",
+        message: initialAssignment.errors.join(" "),
+      };
+    }
+    if (initialAssignment.valid) {
+      return {
+        tone: "neutral",
+        title: "Assignment link loaded",
+        message: `${playerChallenge.metadata.title} is selected in ${MODE_LABELS[modeId]}.`,
+      };
+    }
+    return null;
+  }, [initialAssignment, modeId, playerChallenge.metadata.title]);
 
   const activeDraft = attempt.phase === "response" ? attempt.response.draft : attempt.draft;
   const activeClaimSet = useMemo(() => claimSetFromDraft(activeDraft), [activeDraft]);
@@ -309,6 +389,7 @@ export function App() {
     async function hydrate() {
       try {
         const backend = await store.backend();
+        const assignment = assignmentRef.current;
         const searchParams = new URLSearchParams(globalThis.location?.search ?? "");
         const freshRequested = freshRequestedRef.current;
         if (freshRequested && searchParams.has("fresh") && globalThis.history?.replaceState && globalThis.location) {
@@ -322,16 +403,32 @@ export function App() {
         }
         const saved = freshRequested ? [] : await store.list();
         if (!cancelled && freshRequested) {
-          setAttempt(createAttempt(initialMode));
-          setModeId(initialMode);
+          const freshMode = assignment.valid ? assignment.modeId : initialMode;
+          setAttempt(createAttempt(freshMode));
+          setModeId(freshMode);
           setSelectedClaimId(null);
           setSelectedLimitationId(null);
           setActiveNavId("draft");
         }
-        if (!cancelled && saved[0] && !saved[0].readOnly) {
-          setAttempt(saved[0]);
-          setModeId(saved[0].difficulty);
-          announce("Your most recent compatible attempt was restored from this browser.", "success", "Attempt resumed");
+        const resumable = saved.find((candidate) => {
+          if (candidate.readOnly) return false;
+          if (assignment.status === "invalid") return false;
+          if (!assignment.valid) return true;
+          return (
+            candidate.challenge?.id === assignment.challengeId
+            && candidate.difficulty === assignment.modeId
+          );
+        });
+        if (!cancelled && resumable) {
+          setAttempt(resumable);
+          setModeId(resumable.difficulty);
+          announce(
+            assignment.valid
+              ? "Your most recent attempt for this assigned challenge and mode was restored."
+              : "Your most recent compatible attempt was restored from this browser.",
+            "success",
+            "Attempt resumed",
+          );
         }
         if (!cancelled) setStorageState({ ready: true, backend });
       } catch {
@@ -368,6 +465,36 @@ export function App() {
     return () => globalThis.clearTimeout(timer);
   }, [announce, attempt, store]);
 
+  useEffect(() => {
+    if (!printModel) return undefined;
+    const clearPrintModel = () => setPrintModel(null);
+    globalThis.addEventListener?.("afterprint", clearPrintModel, { once: true });
+    const invokePrint = () => {
+      try {
+        if (typeof globalThis.print !== "function") {
+          announce("Printing is unavailable in this browser.", "warning", "Print unavailable");
+          clearPrintModel();
+          return;
+        }
+        globalThis.print();
+      } catch {
+        announce("The browser could not open its print dialog.", "warning", "Print unavailable");
+        clearPrintModel();
+      }
+    };
+    const frame = typeof globalThis.requestAnimationFrame === "function"
+      ? globalThis.requestAnimationFrame(invokePrint)
+      : globalThis.setTimeout(invokePrint, 0);
+    return () => {
+      globalThis.removeEventListener?.("afterprint", clearPrintModel);
+      if (typeof globalThis.cancelAnimationFrame === "function") {
+        globalThis.cancelAnimationFrame(frame);
+      } else {
+        globalThis.clearTimeout(frame);
+      }
+    };
+  }, [announce, printModel]);
+
   const dispatch = useCallback((action) => {
     setAttempt((current) => {
       try {
@@ -394,6 +521,79 @@ export function App() {
       if (!next && compactRails()) setEvidenceCollapsed(true);
       return next;
     });
+  };
+
+  const changeMode = (nextMode) => {
+    setModeId(nextMode);
+    if (!assignmentRef.current.valid || !globalThis.location || !globalThis.history) return;
+    assignmentRef.current = { ...assignmentRef.current, modeId: nextMode };
+    const challengeEntry = challengeCatalog.find(
+      (entry) => entry.id === assignmentRef.current.challengeId,
+    );
+    const assignmentUrl = new URL(buildAssignmentLink({
+      baseUrl: globalThis.location.href,
+      challenge: challengeEntry,
+      modeId: nextMode,
+    }));
+    globalThis.history.replaceState(
+      globalThis.history.state,
+      "",
+      `${assignmentUrl.pathname}${assignmentUrl.search}${globalThis.location.hash ?? ""}`,
+    );
+  };
+
+  const openQuickTour = () => {
+    setTourStep(0);
+    setModal({ type: "tour" });
+  };
+
+  const dismissFirstUseGuide = () => {
+    markQuickTourComplete();
+    setShowFirstUseGuide(false);
+    focusBriefingStart();
+    announce("The quick tour remains available from Help.");
+  };
+
+  const finishQuickTour = () => {
+    markQuickTourComplete();
+    setShowFirstUseGuide(false);
+    setModal(null);
+    focusBriefingStart();
+    announce("Quick tour complete. You can replay it from Help.", "success");
+  };
+
+  const copyAssignment = async () => {
+    const challengeEntry = challengeCatalog.find(
+      (entry) => entry.id === challenge01PlayerFacing.challengeId,
+    );
+    const url = buildAssignmentLink({
+      baseUrl: globalThis.location?.href,
+      challenge: challengeEntry,
+      modeId,
+    });
+    try {
+      if (typeof globalThis.navigator?.clipboard?.writeText !== "function") {
+        throw new Error("Clipboard unavailable");
+      }
+      await globalThis.navigator.clipboard.writeText(url);
+      announce("Assignment link copied. It selects this challenge and mode without carrying attempt data.", "success");
+    } catch {
+      setModal({ type: "assignment-link", url });
+    }
+  };
+
+  const openPrintDialog = () => {
+    setPrintPacketType(availablePrintPackets.at(-1) ?? PRINT_PACKET_TYPES.DRAFTING);
+    setModal({ type: "print" });
+  };
+
+  const confirmPrintPacket = () => {
+    try {
+      setPrintModel(buildPlayerPrintModel({ playerChallenge, attempt, packetType: printPacketType }));
+      setModal(null);
+    } catch (error) {
+      announce(error.message, "warning", "Print packet unavailable");
+    }
   };
 
   const startDrafting = () => {
@@ -733,7 +933,19 @@ export function App() {
       />
     );
   } else if (attempt.phase === "briefing") {
-    stageContent = <BriefingScreen challenge={playerChallenge} modeId={modeId} onModeChange={setModeId} onStart={startDrafting} />;
+    stageContent = (
+      <BriefingScreen
+        challenge={playerChallenge}
+        modeId={modeId}
+        onModeChange={changeMode}
+        onStart={startDrafting}
+        assignmentNotice={assignmentNotice}
+        onCopyAssignment={copyAssignment}
+        showFirstUseGuide={showFirstUseGuide}
+        onStartTour={openQuickTour}
+        onDismissFirstUse={dismissFirstUseGuide}
+      />
+    );
   } else if (["drafting", "preflight", "response"].includes(attempt.phase)) {
     stageContent = (
       <div className="draft-layout" data-evidence-collapsed={evidenceCollapsed} data-inspector-collapsed={inspectorCollapsed}>
@@ -800,6 +1012,41 @@ export function App() {
   }
 
   const modalFooter = (() => {
+    if (modal?.type === "tour") {
+      return (
+        <>
+          <button
+            type="button"
+            className="secondary-button"
+            onClick={() => setTourStep((current) => Math.max(0, current - 1))}
+            disabled={tourStep === 0}
+          >
+            Back
+          </button>
+          {tourStep < QUICK_TOUR_STEPS.length - 1 ? (
+            <button
+              type="button"
+              className="primary-button"
+              onClick={() => setTourStep((current) => Math.min(QUICK_TOUR_STEPS.length - 1, current + 1))}
+            >
+              Next
+            </button>
+          ) : (
+            <button type="button" className="primary-button" onClick={finishQuickTour}>
+              Finish tour
+            </button>
+          )}
+        </>
+      );
+    }
+    if (modal?.type === "print") {
+      return (
+        <>
+          <button type="button" className="secondary-button" onClick={() => setModal(null)}>Cancel</button>
+          <button type="button" className="primary-button" onClick={confirmPrintPacket}>Open print dialog</button>
+        </>
+      );
+    }
     if (modal?.type === "mapping" && !modal.revealed) return <button type="button" className="primary-button" onClick={submitMappingChallenge} disabled={!mappingChoice}>Submit challenge</button>;
     if (modal?.type === "mapping" && modal.revealed) return <button type="button" className="primary-button" onClick={() => setModal(null)}>Return to the record</button>;
     if (modal?.type === "response-review") {
@@ -819,7 +1066,67 @@ export function App() {
         <HelpContent
           challenge={playerChallenge}
           onOpenGuides={() => navigate("/guides/")}
+          onOpenTour={openQuickTour}
         />
+      );
+    }
+    if (modal.type === "tour") return <GuidedTourStep step={tourStep} />;
+    if (modal.type === "assignment-link") {
+      return (
+        <label className="assignment-link-field">
+          <span>Shareable challenge and mode link</span>
+          <input
+            type="text"
+            value={modal.url}
+            readOnly
+            onFocus={(event) => event.currentTarget.select()}
+          />
+          <small>This link contains no claim text, score, answer, or attempt identifier.</small>
+        </label>
+      );
+    }
+    if (modal.type === "print") {
+      const options = [
+        {
+          id: PRINT_PACKET_TYPES.DRAFTING,
+          label: "Drafting packet",
+          detail: "Player-facing disclosure, current claims or briefing scaffold, and reflection prompts.",
+        },
+        {
+          id: PRINT_PACKET_TYPES.AMENDMENT,
+          label: "Amendment packet",
+          detail: "Submitted claims, revealed simulated findings, current response draft, and argument.",
+        },
+        {
+          id: PRINT_PACKET_TYPES.DEBRIEF,
+          label: "Debrief packet",
+          detail: "Submitted and amended claims, prediction review, and the visible score breakdown.",
+        },
+      ];
+      return (
+        <fieldset className="print-options">
+          <legend>Choose a player-facing packet</legend>
+          <p>Packets unlock with the exercise and include only material already available in your attempt.</p>
+          {options.map((option) => {
+            const available = availablePrintPackets.includes(option.id);
+            return (
+              <label key={option.id}>
+                <input
+                  type="radio"
+                  name="print-packet"
+                  value={option.id}
+                  checked={printPacketType === option.id}
+                  disabled={!available}
+                  onChange={() => setPrintPacketType(option.id)}
+                />
+                <span>
+                  <strong>{option.label}</strong>
+                  <small>{available ? option.detail : `${option.detail} Not unlocked yet.`}</small>
+                </span>
+              </label>
+            );
+          })}
+        </fieldset>
       );
     }
     if (modal.type === "boundary") return <p>{playerChallenge.educationalBoundary.full}</p>;
@@ -861,6 +1168,9 @@ export function App() {
   const modalTitle = {
     reference: modal?.reference?.label ?? "Evidence record",
     help: "ScopeCraft playbook",
+    tour: `ScopeCraft quick tour · Step ${tourStep + 1} of ${QUICK_TOUR_STEPS.length}`,
+    "assignment-link": "Copy assignment link",
+    print: "Print player packet",
     boundary: "Examiner simulation boundary",
     disclosure: "Invention disclosure",
     references: "Prior-art reference cards",
@@ -875,7 +1185,8 @@ export function App() {
   }[modal?.type] ?? "ScopeCraft";
 
   return (
-    <div className="app-shell" data-nav-collapsed={navCollapsed} data-view={isGuideRoute ? "guides" : "practice"}>
+    <div className="app-root" data-print-ready={printModel ? "true" : "false"}>
+      <div className="app-shell" data-nav-collapsed={navCollapsed} data-view={isGuideRoute ? "guides" : "practice"}>
       <header className="topbar">
         <div className="brand">ScopeCraft</div>
         <div className="challenge-title">
@@ -916,6 +1227,16 @@ export function App() {
               </>
             ) : null}
             {!isGuideRoute ? (
+              <button
+                type="button"
+                className="quiet-button print-packet-entry"
+                onClick={openPrintDialog}
+                aria-label="Print player packet"
+              >
+                <Printer size={15} aria-hidden="true" /> <span>Print packet</span>
+              </button>
+            ) : null}
+            {!isGuideRoute ? (
               <button type="button" className="quiet-button guide-mobile-entry" onClick={() => navigate("/guides/")}>
                 <BookOpen size={15} aria-hidden="true" /> Guides
               </button>
@@ -926,8 +1247,10 @@ export function App() {
         </main>
       </div>
 
-      <Modal open={Boolean(modal)} title={modalTitle} onClose={() => setModal(null)} footer={modalFooter} size={["response-review", "claim-history"].includes(modal?.type) ? "large" : "medium"}>{modalBody}</Modal>
-      <ToastRegion toasts={toasts} />
+        <Modal open={Boolean(modal)} title={modalTitle} onClose={() => setModal(null)} footer={modalFooter} size={["response-review", "claim-history"].includes(modal?.type) ? "large" : "medium"}>{modalBody}</Modal>
+        <ToastRegion toasts={toasts} />
+      </div>
+      <PracticePrintPacket model={printModel} />
     </div>
   );
 }

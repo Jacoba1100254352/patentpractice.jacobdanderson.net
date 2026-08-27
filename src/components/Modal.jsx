@@ -129,7 +129,7 @@ export function Modal({
         role="dialog"
         tabIndex={-1}
       >
-        <header className="modal-header">
+        <div className="modal-header">
           <h2 id={titleId}>{title}</h2>
           <button
             aria-label={closeLabel}
@@ -140,7 +140,7 @@ export function Modal({
           >
             <X aria-hidden="true" size={18} weight="bold" />
           </button>
-        </header>
+        </div>
         <div className="modal-body" id={bodyId}>
           {children}
         </div>

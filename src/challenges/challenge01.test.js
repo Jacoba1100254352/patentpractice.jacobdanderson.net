@@ -11,7 +11,7 @@ import {
   getChallenge01ForMode,
   getChallengeById,
   validateChallengeBundle,
-} from "../src/challenges/index.js";
+} from "./index.js";
 
 function mutableCopy(value) {
   return JSON.parse(JSON.stringify(value));

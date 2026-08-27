@@ -1,6 +1,7 @@
 import {
   ArrowRight,
   CheckCircle,
+  ClipboardText,
   Circle,
   FileText,
   Flag,
@@ -12,19 +13,43 @@ import {
 } from "@phosphor-icons/react";
 
 import { normalizeClaimSet, sortClaims } from "../domain/claims.js";
+import { FirstUseGuide } from "./GuidedTour.jsx";
 
-export function BriefingScreen({ challenge, modeId, onModeChange, onStart }) {
+export function BriefingScreen({
+  challenge,
+  modeId,
+  onModeChange,
+  onStart,
+  assignmentNotice,
+  onCopyAssignment,
+  showFirstUseGuide = false,
+  onStartTour,
+  onDismissFirstUse,
+}) {
   const modes = Object.values(challenge.modes);
   return (
     <div className="phase-screen">
       <div className="phase-content">
+        {showFirstUseGuide ? (
+          <FirstUseGuide onStartTour={onStartTour} onDismiss={onDismissFirstUse} />
+        ) : null}
+        {assignmentNotice ? (
+          <section
+            className="assignment-notice"
+            data-tone={assignmentNotice.tone}
+            role={assignmentNotice.tone === "warning" ? "alert" : "status"}
+          >
+            <strong>{assignmentNotice.title}</strong>
+            <p>{assignmentNotice.message}</p>
+          </section>
+        ) : null}
         <header className="phase-hero">
           <div>
             <p className="stage-kicker">Challenge 01 · U.S. system drafting</p>
             <h2>{challenge.metadata.title}</h2>
             <p>{challenge.disclosure.sections.find((section) => section.id === "claim-task")?.body}</p>
           </div>
-          <button type="button" className="primary-button" onClick={onStart}>
+          <button type="button" className="primary-button" data-briefing-start onClick={onStart}>
             Start drafting <ArrowRight size={16} aria-hidden="true" />
           </button>
         </header>
@@ -75,6 +100,13 @@ export function BriefingScreen({ challenge, modeId, onModeChange, onStart }) {
                     </span>
                   </label>
                 ))}
+                <button
+                  type="button"
+                  className="secondary-button assignment-link-button"
+                  onClick={onCopyAssignment}
+                >
+                  <ClipboardText size={15} aria-hidden="true" /> Copy assignment link
+                </button>
               </div>
             </section>
             <section className="section-surface" style={{ marginTop: 18 }}>

@@ -1,6 +1,9 @@
 import {
   assertValidChallengeBundle,
   challenge01,
+  challenge01CompatibilityHash,
+  challenge01ContentDigest,
+  challenge01ContentVersion,
   challenge01EvaluatorData,
   challenge01PlayerFacing,
   getChallenge01ForMode,
@@ -10,6 +13,9 @@ import {
 export {
   assertValidChallengeBundle,
   challenge01,
+  challenge01CompatibilityHash,
+  challenge01ContentDigest,
+  challenge01ContentVersion,
   challenge01EvaluatorData,
   challenge01PlayerFacing,
   getChallenge01ForMode,
@@ -23,6 +29,8 @@ export const challengeCatalog = Object.freeze([
     slug: challenge01PlayerFacing.metadata.slug,
     title: challenge01PlayerFacing.metadata.title,
     contentVersion: challenge01PlayerFacing.contentVersion,
+    contentDigest: challenge01ContentDigest,
+    compatibilityHash: challenge01CompatibilityHash,
     jurisdiction: challenge01PlayerFacing.metadata.jurisdiction,
     availableModes: Object.keys(challenge01PlayerFacing.modes),
     status: "playable",

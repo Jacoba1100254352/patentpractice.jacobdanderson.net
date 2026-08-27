@@ -1,3 +1,14 @@
+map "$status:$uri" $scopecraft_cache_control {
+    default "no-cache";
+    "~^200:/assets/[A-Za-z0-9][A-Za-z0-9._-]*-[A-Za-z0-9_-]{8}\.(?:css|ico|jpe?g|js|png|svg|webp|woff2?)$" "public, max-age=31536000, immutable";
+    ~^(?:404|405): "no-store";
+}
+
+map $sent_http_content_type $scopecraft_vary {
+    default "";
+    ~*text/html "Accept";
+}
+
 server {
     listen 80;
     listen [::]:80;
@@ -6,22 +17,50 @@ server {
     root /srv/scopecraft/dist/client;
     index index.html;
 
+    if ($request_method !~ ^(GET|HEAD)$) {
+        return 405;
+    }
+
+    add_header Cache-Control $scopecraft_cache_control always;
+    add_header Permissions-Policy "camera=(), geolocation=(), microphone=(), payment=(), usb=()" always;
+    add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+    add_header Vary $scopecraft_vary always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header X-Frame-Options "DENY" always;
+
+    location ~ (^|/)\. {
+        return 404;
+    }
+
+    # Nginx decodes the request URI once before location matching. Reject any
+    # encoded byte that remains and could become structural after another
+    # decode so this host matches the Sites worker's private-path gate.
+    location ~* "%[0-9a-f][0-9a-f]" {
+        return 404;
+    }
+
+    location ~* ^/(?:api|data|deploy|node_modules|ops|public|scripts|src|tests?|worker)(?:/|$) {
+        return 404;
+    }
+
+    location ~* ^/(?:AGENTS\.md|README(?:\.[^/]+)?|package(?:-lock)?\.json|vite\.config\.[^/]+|vitest\.config\.[^/]+)$ {
+        return 404;
+    }
+
     location ^~ /assets/ {
         try_files $uri =404;
-        add_header Cache-Control "public, max-age=31536000, immutable";
     }
 
     location ^~ /downloads/ {
         try_files $uri =404;
-        add_header Cache-Control "no-cache";
+    }
+
+    location ~* /[^/]+\.[A-Za-z0-9][A-Za-z0-9._-]*$ {
+        try_files $uri =404;
     }
 
     location / {
-        if ($request_method !~ ^(GET|HEAD)$) {
-            return 405;
-        }
         try_files $uri $uri/ @scopecraft_app;
-        add_header Cache-Control "no-cache";
     }
 
     location @scopecraft_app {

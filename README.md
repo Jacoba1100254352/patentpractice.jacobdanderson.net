@@ -23,6 +23,19 @@ Challenge 01 uses a fictional pressure-history adaptive mouse disclosure and lin
 
 The current release contains one challenge. Evaluator rules, mappings, and target embodiments ship with the client-side source, so concealed material is a learning-interface mechanic rather than anti-cheat security.
 
+## Reviewed challenge content
+
+The playable challenge follows a reviewed-content promotion path:
+
+1. Keep nonpublic candidate drafts outside the release inputs. Local operator candidates may be kept under `ops/challenge-candidates/` with filenames ending in `.local`, which the repository already ignores. Confidential invention records, transcripts, and matter documents remain in their authorized Patent Law matter workspace and must not be copied into this public repository.
+2. Complete human review and fictionalization before placing a candidate's public-safe player and evaluator records in `data/challenges/reviewed/`. A reviewed record must expressly identify completed review, fictionalization, public-release approval, and the saved-attempt compatibility hash. Any player or evaluator content change must advance both `contentVersion` and the matching compatibility hash so older saved attempts are not silently evaluated against different content.
+3. Run `npm run challenges:generate` to validate the reviewed record and regenerate `src/challenges/generated/challenge01.generated.js`. The generated module omits review metadata and is the challenge data actually consumed by the application.
+4. Run `npm run challenges:check` before building or publishing. Check mode is non-mutating and fails if the reviewed record is invalid, contains blocked confidential or credential material, or no longer matches the committed generated module.
+
+Do not edit a generated challenge module by hand. Candidate ingestion never promotes content automatically, and neither candidate files nor the human-review record is copied into `dist/client`. The player-facing and evaluator objects remain separate in source and are combined only for the internal deterministic evaluator. Because the evaluator ultimately ships in the static client, all evaluator content must also be safe for public release.
+
+The downloadable practice library is governed separately by `data/downloads/reviewed-practice-library.json`. Its approved SHA-256 digest and complete ZIP entry inventory must match before a build can ship. The final client verifier also rejects unexpected files, unhashed cacheable assets, local or confidential paths, credential patterns, non-HTTPS links, and URL hosts that have not been explicitly approved.
+
 ## Drafting guides
 
 The in-app Guides area covers application workflow, independent and dependent claims, Summary drafting, figure narratives, claim-set restructuring, drafting language, and quick-reference checks. It separates official U.S. legal and procedural baselines from practice suggestions and hypothetical examples. The downloadable library is available from the Guides hub.
@@ -37,7 +50,7 @@ ScopeCraft has no account system, analytics, or telemetry. Drafts are stored loc
 
 ## Run locally
 
-Requirements: Node.js 22.22.2, 24.15.0, 26.0.0, or a compatible later release, plus npm.
+Requirements: Node.js 24.18.1 and npm 12.0.2. The repository pins that exact production and CI toolchain in `.node-version`, `.nvmrc`, `package.json`, and the lockfile.
 
 ```sh
 npm ci

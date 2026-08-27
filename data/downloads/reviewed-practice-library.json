@@ -1,0 +1,32 @@
+{
+  "schemaVersion": "1.0.0",
+  "reviewStatus": "reviewed",
+  "reviewedAt": "2026-08-27",
+  "publicReleaseApproved": true,
+  "approvalBasis": "Pinned migration of the existing public ScopeCraft practice-library download. Any archive change requires a new review, inventory, and digest.",
+  "archivePath": "downloads/patent-drafting-practice-library-expanded.zip",
+  "sha256": "1866160df86ed088decc8da7c6ca12170377b90eb4f2b1cd7b4d16897bb9cbb0",
+  "entries": [
+    "Patent Drafting Practice Library - Expanded/",
+    "Patent Drafting Practice Library - Expanded/Figures and Detailed Description/",
+    "Patent Drafting Practice Library - Expanded/Figures and Detailed Description/figure_narrative_high_level_guide.pdf",
+    "Patent Drafting Practice Library - Expanded/Figures and Detailed Description/cabinet_system_template_with_guide.xlsx",
+    "Patent Drafting Practice Library - Expanded/Language/",
+    "Patent Drafting Practice Library - Expanded/Language/Drafting_Language_and_Optionality_Guide.docx",
+    "Patent Drafting Practice Library - Expanded/Specification/",
+    "Patent Drafting Practice Library - Expanded/Specification/Application Architecture/",
+    "Patent Drafting Practice Library - Expanded/Specification/Application Architecture/Application_Architecture_and_Workflow_Guide.docx",
+    "Patent Drafting Practice Library - Expanded/Specification/Summary of the Invention/",
+    "Patent Drafting Practice Library - Expanded/Specification/Summary of the Invention/Summary_of_the_Invention_Guide.docx",
+    "Patent Drafting Practice Library - Expanded/README.md",
+    "Patent Drafting Practice Library - Expanded/00 Start Here/",
+    "Patent Drafting Practice Library - Expanded/00 Start Here/Patent_Drafting_Practice_Library_Index.docx",
+    "Patent Drafting Practice Library - Expanded/Claims/",
+    "Patent Drafting Practice Library - Expanded/Claims/Claim-Set Strategy/",
+    "Patent Drafting Practice Library - Expanded/Claims/Claim-Set Strategy/Claim_Set_Strategy_and_Prosecution_Guide.docx",
+    "Patent Drafting Practice Library - Expanded/Claims/Dependent Claims/",
+    "Patent Drafting Practice Library - Expanded/Claims/Dependent Claims/Dependent_Claim_Outline_Guide.docx",
+    "Patent Drafting Practice Library - Expanded/Claims/Independent Claims/",
+    "Patent Drafting Practice Library - Expanded/Claims/Independent Claims/Independent_Claim_Outline_Guide.docx"
+  ]
+}

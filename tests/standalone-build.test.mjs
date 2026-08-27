@@ -23,8 +23,11 @@ import { guides } from "../src/guides/catalog.js";
 
 const execFileAsync = promisify(execFile);
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const npmCommand = process.platform === "win32" ? "npm.cmd" : "npm";
+const npmInvocation = process.env.npm_execpath
+  ? { arguments: [process.env.npm_execpath], command: process.execPath }
+  : { arguments: [], command: process.platform === "win32" ? "npm.cmd" : "npm" };
 const omittedTopLevelEntries = new Set([
+  ".ai-work",
   ".git",
   ".openai",
   ".vite",
@@ -55,6 +58,25 @@ const forbiddenRuntimePackages = [
   /^miniflare$/u,
   /^wrangler$/u,
 ];
+const expectedSecurityHeaders = {
+  "permissions-policy": "camera=(), geolocation=(), microphone=(), payment=(), usb=()",
+  "referrer-policy": "strict-origin-when-cross-origin",
+  "x-content-type-options": "nosniff",
+  "x-frame-options": "DENY",
+};
+const privateRootEntries = new Set([
+  "api",
+  "data",
+  "deploy",
+  "node_modules",
+  "ops",
+  "public",
+  "scripts",
+  "src",
+  "test",
+  "tests",
+  "worker",
+]);
 
 async function pathExists(candidate) {
   try {
@@ -94,19 +116,78 @@ async function regularFile(candidate) {
   }
 }
 
+function assertSecurityHeaders(response) {
+  for (const [name, value] of Object.entries(expectedSecurityHeaders)) {
+    assert.equal(response.headers.get(name), value, `${name} is applied`);
+  }
+}
+
+function decodeContractPath(pathname) {
+  let decoded = pathname;
+  try {
+    for (let pass = 0; pass < 8; pass += 1) {
+      const next = decodeURIComponent(decoded);
+      if (next === decoded) break;
+      decoded = next;
+    }
+    if (decodeURIComponent(decoded) !== decoded) return null;
+  } catch {
+    return null;
+  }
+  return decoded.replaceAll("\\", "/");
+}
+
+function isPrivateContractPath(pathname) {
+  const decoded = decodeContractPath(pathname);
+  if (decoded === null) return true;
+  const segments = decoded.split("/").filter(Boolean);
+  if (segments.some((segment) => segment.startsWith("."))) return true;
+  if (segments.length === 0) return false;
+  if (privateRootEntries.has(segments[0].toLowerCase())) return true;
+  return /^(?:AGENTS\.md|README(?:\.[^/]+)?|package(?:-lock)?\.json|vite\.config\.[^/]+|vitest\.config\.[^/]+)$/iu.test(
+    segments.join("/"),
+  );
+}
+
+function nginxContractHeaders(pathname, contentType, status = 200) {
+  const immutableAsset = /^\/assets\/[A-Za-z0-9][A-Za-z0-9._-]*-[A-Za-z0-9_-]{8}\.(?:css|ico|jpe?g|js|png|svg|webp|woff2?)$/u.test(
+    pathname,
+  );
+  return {
+    ...expectedSecurityHeaders,
+    "cache-control": [404, 405].includes(status)
+      ? "no-store"
+      : immutableAsset
+        ? "public, max-age=31536000, immutable"
+        : "no-cache",
+    ...(contentType.includes("text/html") ? { vary: "Accept" } : {}),
+  };
+}
+
 async function startNginxContractServer(portable) {
   const server = createServer((request, response) => {
     void (async () => {
       const pathname = decodeURIComponent(new URL(request.url, "http://localhost").pathname);
       const candidate = path.resolve(portable, `.${pathname}`);
+      const decodedPathname = decodeContractPath(pathname);
       const insidePortable =
         candidate === portable || candidate.startsWith(`${portable}${path.sep}`);
       const isAssetRequest = pathname.startsWith("/assets/");
       const isDownloadRequest = pathname.startsWith("/downloads/");
+      const isFileRequest = decodedPathname !== null
+        && /(?:^|\/)[^/]+\.[A-Za-z0-9][A-Za-z0-9._-]*$/u.test(decodedPathname);
       const acceptsHtml = request.headers.accept?.includes("text/html") ?? false;
 
       if (!["GET", "HEAD"].includes(request.method)) {
-        response.writeHead(405).end("method not allowed");
+        response
+          .writeHead(405, nginxContractHeaders(pathname, "text/plain; charset=utf-8", 405))
+          .end("method not allowed");
+        return;
+      }
+
+      if (isPrivateContractPath(pathname)) {
+        response.writeHead(404, nginxContractHeaders(pathname, "text/plain; charset=utf-8", 404));
+        response.end(request.method === "HEAD" ? undefined : "not found");
         return;
       }
 
@@ -114,7 +195,7 @@ async function startNginxContractServer(portable) {
         ? [
             candidate,
             path.join(candidate, "index.html"),
-            ...(!isAssetRequest && !isDownloadRequest && acceptsHtml
+            ...(!isAssetRequest && !isDownloadRequest && !isFileRequest && acceptsHtml
               ? [path.join(portable, "index.html")]
               : []),
           ]
@@ -128,7 +209,8 @@ async function startNginxContractServer(portable) {
       }
 
       if (!selected) {
-        response.writeHead(404).end("not found");
+        response.writeHead(404, nginxContractHeaders(pathname, "text/plain; charset=utf-8", 404));
+        response.end(request.method === "HEAD" ? undefined : "not found");
         return;
       }
 
@@ -140,6 +222,7 @@ async function startNginxContractServer(portable) {
         ".zip": "application/zip",
       };
       response.writeHead(200, {
+        ...nginxContractHeaders(pathname, contentTypes[path.extname(selected)] ?? "application/octet-stream"),
         "content-type": contentTypes[path.extname(selected)] ?? "application/octet-stream",
       });
       response.end(request.method === "HEAD" ? undefined : body);
@@ -192,7 +275,7 @@ test(
     }
 
     try {
-      await execFileAsync(npmCommand, ["run", "build"], {
+      await execFileAsync(npmInvocation.command, [...npmInvocation.arguments, "run", "build"], {
         cwd: temporaryRoot,
         env: { ...process.env, npm_config_audit: "false", npm_config_fund: "false" },
         maxBuffer: 10 * 1024 * 1024,
@@ -243,6 +326,28 @@ test(
     assert.match(nginxConfig, /\$request_method\s+!~\s+\^\(GET\|HEAD\)\$/u);
     assert.match(
       nginxConfig,
+      /map\s+"\$status:\$uri"\s+\$scopecraft_cache_control\s*\{[\s\S]*?max-age=31536000, immutable/u,
+    );
+    assert.match(
+      nginxConfig,
+      /map\s+\$sent_http_content_type\s+\$scopecraft_vary\s*\{[\s\S]*?text\/html\s+"Accept"/u,
+    );
+    for (const [header, value] of [
+      ["Permissions-Policy", "camera=(), geolocation=(), microphone=(), payment=(), usb=()"],
+      ["Referrer-Policy", "strict-origin-when-cross-origin"],
+      ["X-Content-Type-Options", "nosniff"],
+      ["X-Frame-Options", "DENY"],
+    ]) {
+      assert.match(
+        nginxConfig,
+        new RegExp(`add_header\\s+${header}\\s+"?${value.replace(/[()]/gu, "\\$&")}"?\\s+always;`, "u"),
+      );
+    }
+    assert.match(nginxConfig, /location\s+~\s+\(\^\|\/\)\\\./u);
+    assert.match(nginxConfig, /location\s+~\*\s+"%\[0-9a-f\]\[0-9a-f\]"/u);
+    assert.match(nginxConfig, /location\s+~\*\s+\/\[\^\/\]\+\\\./u);
+    assert.match(
+      nginxConfig,
       /location\s+@scopecraft_app\s*\{[\s\S]*?\$http_accept\s+!~\*\s+"text\/html"[\s\S]*?rewrite\s+\^\s+\/index\.html\s+last;/u,
     );
 
@@ -261,22 +366,53 @@ test(
         headers: { accept: "text/html" },
       });
       assert.equal(response.status, 200, `${route} serves through the Nginx routing contract`);
+      assert.equal(response.headers.get("cache-control"), "no-cache");
+      assert.equal(response.headers.get("vary"), "Accept");
+      assertSecurityHeaders(response);
       assert.match(await response.text(), /<div id="root"><\/div>/u);
     }
     const missingNonHtmlRoute = await fetch(`${nginx.baseUrl}/api/missing`, {
       headers: { accept: "application/json" },
     });
     assert.equal(missingNonHtmlRoute.status, 404);
+    assertSecurityHeaders(missingNonHtmlRoute);
+    for (const route of [
+      "/.env",
+      "/%252eenv",
+      "/%25252eenv",
+      "/package.json",
+      "/src/App.jsx",
+      "/src%252fApp.jsx",
+      "/%252573rc/App.jsx",
+      "/random.xyz",
+      "/random%252exyz",
+    ]) {
+      const response = await fetch(`${nginx.baseUrl}${route}`, {
+        headers: { accept: "text/html" },
+      });
+      assert.equal(response.status, 404, `${route} never falls through to the app shell`);
+      assertSecurityHeaders(response);
+    }
     const missingAsset = await fetch(`${nginx.baseUrl}/assets/missing.js`);
     assert.equal(missingAsset.status, 404);
+    assert.equal(missingAsset.headers.get("cache-control"), "no-store");
+    assertSecurityHeaders(missingAsset);
     const missingDownload = await fetch(`${nginx.baseUrl}/downloads/missing.zip`);
     assert.equal(missingDownload.status, 404);
-    const writeRequest = await fetch(`${nginx.baseUrl}/flow/step-two`, { method: "POST" });
-    assert.equal(writeRequest.status, 405);
+    assert.equal(missingDownload.headers.get("cache-control"), "no-store");
+    assertSecurityHeaders(missingDownload);
+    for (const route of ["/flow/step-two", "/assets/missing.js", "/downloads/missing.zip"]) {
+      const writeRequest = await fetch(`${nginx.baseUrl}${route}`, { method: "POST" });
+      assert.equal(writeRequest.status, 405, `${route} rejects write methods`);
+      assert.equal(writeRequest.headers.get("cache-control"), "no-store");
+      assertSecurityHeaders(writeRequest);
+    }
     const download = await fetch(
       `${nginx.baseUrl}/downloads/patent-drafting-practice-library-expanded.zip`,
     );
     assert.equal(download.status, 200);
+    assert.equal(download.headers.get("cache-control"), "no-cache");
+    assertSecurityHeaders(download);
     assert.ok((await download.arrayBuffer()).byteLength > 0);
 
     for (const extension of [".js", ".css"]) {
@@ -288,8 +424,18 @@ test(
         response.headers.get("content-type"),
         extension === ".js" ? /javascript/u : /text\/css/u,
       );
+      assert.equal(response.headers.get("cache-control"), "public, max-age=31536000, immutable");
+      assertSecurityHeaders(response);
       assert.deepEqual(Buffer.from(await response.arrayBuffer()), expected);
     }
+
+    const headResponse = await fetch(`${nginx.baseUrl}/`, {
+      headers: { accept: "text/html" },
+      method: "HEAD",
+    });
+    assert.equal(headResponse.status, 200);
+    assert.equal(await headResponse.text(), "");
+    assertSecurityHeaders(headResponse);
   },
 );
 
@@ -305,11 +451,18 @@ test("keeps provider-specific APIs and identifiers out of client build inputs", 
 
   const packageJson = JSON.parse(await readFile(path.join(root, "package.json"), "utf8"));
   assert.doesNotMatch(packageJson.scripts.build, /(?:openai|sites|worker)/iu);
+  assert.match(packageJson.scripts.build, /npm run challenges:check/u);
+  assert.match(packageJson.scripts.build, /node scripts\/verify-client-artifact\.mjs$/u);
+  assert.equal(packageJson.packageManager, "npm@12.0.2");
+  assert.deepEqual(packageJson.engines, { node: "24.18.1", npm: "12.0.2" });
+  assert.equal((await readFile(path.join(root, ".node-version"), "utf8")).trim(), "24.18.1");
+  assert.equal((await readFile(path.join(root, ".nvmrc"), "utf8")).trim(), "24.18.1");
   const directPackages = Object.keys({
     ...packageJson.dependencies,
     ...packageJson.devDependencies,
   });
   const packageLock = JSON.parse(await readFile(path.join(root, "package-lock.json"), "utf8"));
+  assert.deepEqual(packageLock.packages[""].engines, { node: "24.18.1", npm: "12.0.2" });
   const installedPackages = Object.keys(packageLock.packages ?? {}).flatMap((location) => {
     const marker = "node_modules/";
     const markerIndex = location.lastIndexOf(marker);

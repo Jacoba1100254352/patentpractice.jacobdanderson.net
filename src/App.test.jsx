@@ -7,11 +7,17 @@ import axe from "axe-core";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { App } from "./App.jsx";
+import { createStarterClaimSet } from "./domain/sessionModel.js";
+import { ACTION_TYPES, attemptReducer, createAttemptState } from "./domain/workflow.js";
+
+const persistenceMocks = vi.hoisted(() => ({
+  list: vi.fn().mockResolvedValue([]),
+}));
 
 vi.mock("./persistence/attemptStore.js", () => ({
   createAttemptStore: () => ({
     backend: vi.fn().mockResolvedValue("memory"),
-    list: vi.fn().mockResolvedValue([]),
+    list: persistenceMocks.list,
     save: vi.fn().mockImplementation(async (attempt) => attempt),
   }),
   exportAttemptState: vi.fn(() => "{}"),
@@ -20,8 +26,29 @@ vi.mock("./persistence/attemptStore.js", () => ({
 afterEach(() => {
   cleanup();
   globalThis.history.replaceState(null, "", "/");
+  globalThis.localStorage?.clear?.();
+  persistenceMocks.list.mockReset().mockResolvedValue([]);
   vi.clearAllMocks();
 });
+
+function savedDraftingAttempt(modeId, attemptId) {
+  const created = createAttemptState({
+    attemptId,
+    challengeId: "challenge-01-pressure-history-adaptive-mouse",
+    challengeVersion: "1.0.0",
+    challengeHash: "sha256:challenge01-v1.0.0",
+    engineVersion: "1.0.0",
+    engineHash: "sha256:scopecraft-engine-v1.0.0",
+    difficulty: modeId,
+    mappingChallenges: [],
+    initialDraft: { claims: createStarterClaimSet().claims, notes: "" },
+    now: "2026-08-27T12:00:00.000Z",
+  });
+  return attemptReducer(created, {
+    type: ACTION_TYPES.START_DRAFTING,
+    meta: { now: "2026-08-27T12:01:00.000Z" },
+  });
+}
 
 async function expectNoAxeViolations(container) {
   const result = await axe.run(container, {
@@ -137,7 +164,7 @@ describe("ScopeCraft playable application", () => {
     ).toBeInTheDocument();
     expect(screen.getByText(/limited to the ScopeCraft challenge record/iu)).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Portfolio score" })).toBeInTheDocument();
-  });
+  }, 15_000);
 
   it("opens a guide directly and marks Guides as the active tool", async () => {
     globalThis.history.replaceState(null, "", "/guides/dependent-claims");
@@ -168,5 +195,126 @@ describe("ScopeCraft playable application", () => {
     await user.click(screen.getAllByRole("link", { name: "Back to practice" })[0]);
     expect(globalThis.location.pathname).toBe("/");
     expect(await screen.findByDisplayValue("a pressure sensor producing a pressure signal")).toBeInTheDocument();
+  });
+
+  it("opens an assigned challenge mode and resumes only a matching saved attempt", async () => {
+    persistenceMocks.list.mockResolvedValue([
+      savedDraftingAttempt("examiner", "saved-examiner"),
+      savedDraftingAttempt("guided", "saved-guided"),
+    ]);
+    globalThis.history.replaceState(
+      null,
+      "",
+      "/?challenge=pressure-history-adaptive-mouse&mode=guided",
+    );
+
+    render(<App />);
+
+    expect(await screen.findByRole("region", { name: "Structured claim editor" })).toBeInTheDocument();
+    expect(screen.getByText("Guided mode")).toBeInTheDocument();
+    expect(
+      await screen.findByText(/most recent attempt for this assigned challenge and mode was restored/iu),
+    ).toBeInTheDocument();
+  });
+
+  it("surfaces an invalid assignment link instead of silently treating it as valid", async () => {
+    persistenceMocks.list.mockResolvedValue([
+      savedDraftingAttempt("examiner", "saved-examiner"),
+    ]);
+    globalThis.history.replaceState(
+      null,
+      "",
+      "/?challenge=pressure-history-adaptive-mouse&mode=unknown",
+    );
+
+    render(<App />);
+
+    const warning = await screen.findByRole("alert");
+    expect(warning).toHaveTextContent(/mode that is not available/iu);
+    expect(screen.getByRole("radio", { name: /Practitioner/u })).toBeChecked();
+    expect(screen.queryByRole("region", { name: "Structured claim editor" })).not.toBeInTheDocument();
+  });
+
+  it("preserves a valid assignment while opening and leaving the guide library", async () => {
+    const user = userEvent.setup();
+    globalThis.history.replaceState(
+      null,
+      "",
+      "/?challenge=pressure-history-adaptive-mouse&mode=guided",
+    );
+    render(<App />);
+
+    await screen.findByText("Saved locally");
+    await user.click(screen.getAllByRole("button", { name: "Guides" })[0]);
+    expect(
+      await screen.findByRole("heading", {
+        level: 1,
+        name: "Practical patent-drafting guides",
+      }),
+    ).toBeInTheDocument();
+    expect(globalThis.location.search).toBe(
+      "?challenge=pressure-history-adaptive-mouse&mode=guided",
+    );
+
+    await user.click(screen.getByRole("button", { name: "Return to practice" }));
+    expect(await screen.findByRole("radio", { name: /Guided/u })).toBeChecked();
+    expect(globalThis.location.search).toBe(
+      "?challenge=pressure-history-adaptive-mouse&mode=guided",
+    );
+  });
+
+  it("offers a dismissible first-use entry and replays the accessible tour from Help", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+
+    const firstUse = await screen.findByRole("region", { name: "New to ScopeCraft?" });
+    await user.click(within(firstUse).getByRole("button", { name: "Take the 2-minute tour" }));
+
+    let dialog = await screen.findByRole("dialog", { name: /Step 1 of 4/iu });
+    await waitFor(() =>
+      expect(within(dialog).getByRole("heading", { name: "Begin with the disclosure" })).toHaveFocus(),
+    );
+    for (let step = 2; step <= 4; step += 1) {
+      await user.click(within(dialog).getByRole("button", { name: "Next" }));
+      dialog = await screen.findByRole("dialog", { name: new RegExp(`Step ${step} of 4`, "iu") });
+    }
+    await user.click(within(dialog).getByRole("button", { name: "Finish tour" }));
+    expect(screen.queryByRole("region", { name: "New to ScopeCraft?" })).not.toBeInTheDocument();
+    await waitFor(() => expect(screen.getByRole("button", { name: /Start drafting/iu })).toHaveFocus());
+
+    await user.click(screen.getByRole("button", { name: "Help" }));
+    const help = await screen.findByRole("dialog", { name: "ScopeCraft playbook" });
+    await user.click(within(help).getByRole("button", { name: "Replay the quick tour" }));
+    const replayedTour = await screen.findByRole("dialog", { name: /Step 1 of 4/iu });
+    await expectNoAxeViolations(replayedTour);
+  });
+
+  it("builds the selected player packet before invoking the browser print dialog", async () => {
+    const user = userEvent.setup();
+    const print = vi.spyOn(globalThis, "print").mockImplementation(() => {});
+    render(<App />);
+
+    await screen.findByText("Saved locally");
+    await user.click(screen.getByRole("button", { name: "Print player packet" }));
+    const dialog = await screen.findByRole("dialog", { name: "Print player packet" });
+    expect(within(dialog).getByRole("radio", { name: /Drafting packet/iu })).toBeChecked();
+    expect(within(dialog).getByRole("radio", { name: /Amendment packet/iu })).toBeDisabled();
+    await user.click(within(dialog).getByRole("button", { name: "Open print dialog" }));
+
+    await waitFor(() => expect(print).toHaveBeenCalledTimes(1));
+    expect(document.querySelector(".app-root")).toHaveAttribute("data-print-ready", "true");
+    const packet = document.querySelector(".player-print-packet");
+    expect(packet).toHaveTextContent("Pressure-History Adaptive Mouse");
+    expect(packet).toHaveTextContent("Claim-structure scaffold");
+    expect(packet).not.toHaveTextContent("maintain-amended-claim-1-expert");
+  });
+
+  it("keeps the application printable when no generated packet is active", async () => {
+    render(<App />);
+    await screen.findByText("Saved locally");
+
+    expect(document.querySelector(".app-root")).toHaveAttribute("data-print-ready", "false");
+    expect(document.querySelector(".app-shell")).toBeInTheDocument();
+    expect(document.querySelector(".player-print-packet")).not.toBeInTheDocument();
   });
 });
