@@ -249,14 +249,14 @@ test(
     const temporaryRoot = await mkdtemp(path.join(os.tmpdir(), "scopecraft-portable-"));
     t.after(async () => rm(temporaryRoot, { force: true, recursive: true }));
 
-    await cp(root, temporaryRoot, {
-      filter(source) {
-        const relative = path.relative(root, source);
-        if (!relative) return true;
-        return !omittedTopLevelEntries.has(relative.split(path.sep, 1)[0]);
-      },
-      recursive: true,
-    });
+    // Copy entries individually so a repository-local TMPDIR works without
+    // asking fs.cp to copy the repository into a child of itself.
+    for (const entry of await readdir(root)) {
+      if (omittedTopLevelEntries.has(entry)) continue;
+      await cp(path.join(root, entry), path.join(temporaryRoot, entry), {
+        recursive: true,
+      });
+    }
     await symlink(
       path.join(root, "node_modules"),
       path.join(temporaryRoot, "node_modules"),
