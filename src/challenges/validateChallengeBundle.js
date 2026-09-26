@@ -1,3 +1,8 @@
+import {
+  APPROVED_PUBLIC_URL_HOSTS,
+  approvedHttpsUrl,
+} from "../security/publicUrlPolicy.js";
+
 export function validateChallengeBundle(bundle) {
   const errors = [];
   const add = (path, message) => errors.push(`${path}: ${message}`);
@@ -142,8 +147,13 @@ export function validateChallengeBundle(bundle) {
     for (const field of ["id", "publicationNumber", "title", "publicationDate", "sourceUrl"]) {
       requireString(reference[field], `${path}.${field}`);
     }
-    if (!reference.sourceUrl?.startsWith("https://")) {
-      add(`${path}.sourceUrl`, "must be an HTTPS source URL");
+    try {
+      approvedHttpsUrl(reference.sourceUrl, {
+        approvedHosts: APPROVED_PUBLIC_URL_HOSTS.challenge,
+        label: `${path}.sourceUrl`,
+      });
+    } catch (error) {
+      add(`${path}.sourceUrl`, error.message);
     }
     if (/\.pdf(?:$|\?)/i.test(reference.sourceUrl ?? "")) {
       add(`${path}.sourceUrl`, "must not embed or directly target a patent PDF");

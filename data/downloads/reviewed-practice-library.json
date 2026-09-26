@@ -1,32 +1,131 @@
 {
-  "schemaVersion": "1.0.0",
+  "schemaVersion": "2.0.0",
   "reviewStatus": "reviewed",
   "reviewedAt": "2026-08-27",
   "publicReleaseApproved": true,
-  "approvalBasis": "Pinned migration of the existing public ScopeCraft practice-library download. Any archive change requires a new review, inventory, and digest.",
+  "approvalBasis": "Pinned migration of the existing public ScopeCraft practice-library download. Any archive change requires a new recursive content review and an independently updated GitHub repository approval digest.",
+  "approvalReceipt": {
+    "type": "github-actions-repository-variable",
+    "variable": "PRACTICE_LIBRARY_APPROVED_SHA256",
+    "digestAlgorithm": "sha256"
+  },
   "archivePath": "downloads/patent-drafting-practice-library-expanded.zip",
   "sha256": "1866160df86ed088decc8da7c6ca12170377b90eb4f2b1cd7b4d16897bb9cbb0",
   "entries": [
-    "Patent Drafting Practice Library - Expanded/",
-    "Patent Drafting Practice Library - Expanded/Figures and Detailed Description/",
-    "Patent Drafting Practice Library - Expanded/Figures and Detailed Description/figure_narrative_high_level_guide.pdf",
-    "Patent Drafting Practice Library - Expanded/Figures and Detailed Description/cabinet_system_template_with_guide.xlsx",
-    "Patent Drafting Practice Library - Expanded/Language/",
-    "Patent Drafting Practice Library - Expanded/Language/Drafting_Language_and_Optionality_Guide.docx",
-    "Patent Drafting Practice Library - Expanded/Specification/",
-    "Patent Drafting Practice Library - Expanded/Specification/Application Architecture/",
-    "Patent Drafting Practice Library - Expanded/Specification/Application Architecture/Application_Architecture_and_Workflow_Guide.docx",
-    "Patent Drafting Practice Library - Expanded/Specification/Summary of the Invention/",
-    "Patent Drafting Practice Library - Expanded/Specification/Summary of the Invention/Summary_of_the_Invention_Guide.docx",
-    "Patent Drafting Practice Library - Expanded/README.md",
-    "Patent Drafting Practice Library - Expanded/00 Start Here/",
-    "Patent Drafting Practice Library - Expanded/00 Start Here/Patent_Drafting_Practice_Library_Index.docx",
-    "Patent Drafting Practice Library - Expanded/Claims/",
-    "Patent Drafting Practice Library - Expanded/Claims/Claim-Set Strategy/",
-    "Patent Drafting Practice Library - Expanded/Claims/Claim-Set Strategy/Claim_Set_Strategy_and_Prosecution_Guide.docx",
-    "Patent Drafting Practice Library - Expanded/Claims/Dependent Claims/",
-    "Patent Drafting Practice Library - Expanded/Claims/Dependent Claims/Dependent_Claim_Outline_Guide.docx",
-    "Patent Drafting Practice Library - Expanded/Claims/Independent Claims/",
-    "Patent Drafting Practice Library - Expanded/Claims/Independent Claims/Independent_Claim_Outline_Guide.docx"
+    {
+      "path": "Patent Drafting Practice Library - Expanded/",
+      "type": "directory",
+      "size": 0
+    },
+    {
+      "path": "Patent Drafting Practice Library - Expanded/Figures and Detailed Description/",
+      "type": "directory",
+      "size": 0
+    },
+    {
+      "path": "Patent Drafting Practice Library - Expanded/Figures and Detailed Description/figure_narrative_high_level_guide.pdf",
+      "type": "file",
+      "size": 98504,
+      "sha256": "b3f2772b248fd36d3a8225732d41c31515bdcf35733c4537f8f3d57364ace3b4"
+    },
+    {
+      "path": "Patent Drafting Practice Library - Expanded/Figures and Detailed Description/cabinet_system_template_with_guide.xlsx",
+      "type": "file",
+      "size": 9390,
+      "sha256": "8ac5335e1f1faf3f36db370036d14e7b44f489c97732ccd959371a11d08be1cd"
+    },
+    {
+      "path": "Patent Drafting Practice Library - Expanded/Language/",
+      "type": "directory",
+      "size": 0
+    },
+    {
+      "path": "Patent Drafting Practice Library - Expanded/Language/Drafting_Language_and_Optionality_Guide.docx",
+      "type": "file",
+      "size": 43029,
+      "sha256": "6d6fe833a0f6c7faf3acc93d5b946b49891366db00444c367516091afbf2cfa5"
+    },
+    {
+      "path": "Patent Drafting Practice Library - Expanded/Specification/",
+      "type": "directory",
+      "size": 0
+    },
+    {
+      "path": "Patent Drafting Practice Library - Expanded/Specification/Application Architecture/",
+      "type": "directory",
+      "size": 0
+    },
+    {
+      "path": "Patent Drafting Practice Library - Expanded/Specification/Application Architecture/Application_Architecture_and_Workflow_Guide.docx",
+      "type": "file",
+      "size": 43114,
+      "sha256": "77269b6d296da86ba70e4328302387a92a77db98bdf3c206319e00bdd457f388"
+    },
+    {
+      "path": "Patent Drafting Practice Library - Expanded/Specification/Summary of the Invention/",
+      "type": "directory",
+      "size": 0
+    },
+    {
+      "path": "Patent Drafting Practice Library - Expanded/Specification/Summary of the Invention/Summary_of_the_Invention_Guide.docx",
+      "type": "file",
+      "size": 43031,
+      "sha256": "2d1ef1a24cf53a08d40d3d59c3219bb7bbf1d516294fbb14b12cce4893cbca35"
+    },
+    {
+      "path": "Patent Drafting Practice Library - Expanded/README.md",
+      "type": "file",
+      "size": 3599,
+      "sha256": "d24d54af3fac8d480de376b7626f31d0996dbcb32bbdef0175acb7342b41ba5f"
+    },
+    {
+      "path": "Patent Drafting Practice Library - Expanded/00 Start Here/",
+      "type": "directory",
+      "size": 0
+    },
+    {
+      "path": "Patent Drafting Practice Library - Expanded/00 Start Here/Patent_Drafting_Practice_Library_Index.docx",
+      "type": "file",
+      "size": 43173,
+      "sha256": "026e304931a18eebd0a14ca70b10fd5b63e2adf9f2674674489215702eeef6c2"
+    },
+    {
+      "path": "Patent Drafting Practice Library - Expanded/Claims/",
+      "type": "directory",
+      "size": 0
+    },
+    {
+      "path": "Patent Drafting Practice Library - Expanded/Claims/Claim-Set Strategy/",
+      "type": "directory",
+      "size": 0
+    },
+    {
+      "path": "Patent Drafting Practice Library - Expanded/Claims/Claim-Set Strategy/Claim_Set_Strategy_and_Prosecution_Guide.docx",
+      "type": "file",
+      "size": 42968,
+      "sha256": "1873b70f6006843be005e6f783e0afe1b9cfaf1d3919076393d15a483d7e6f79"
+    },
+    {
+      "path": "Patent Drafting Practice Library - Expanded/Claims/Dependent Claims/",
+      "type": "directory",
+      "size": 0
+    },
+    {
+      "path": "Patent Drafting Practice Library - Expanded/Claims/Dependent Claims/Dependent_Claim_Outline_Guide.docx",
+      "type": "file",
+      "size": 42890,
+      "sha256": "eec53efe9a034f61f93a822f568c7a0c49ac5638fe506c564941ab18cdfda073"
+    },
+    {
+      "path": "Patent Drafting Practice Library - Expanded/Claims/Independent Claims/",
+      "type": "directory",
+      "size": 0
+    },
+    {
+      "path": "Patent Drafting Practice Library - Expanded/Claims/Independent Claims/Independent_Claim_Outline_Guide.docx",
+      "type": "file",
+      "size": 42966,
+      "sha256": "9aac70182cfa1473eee84c09ff8d2124e2d35dee35bb074b8617607e13813432"
+    }
   ]
 }

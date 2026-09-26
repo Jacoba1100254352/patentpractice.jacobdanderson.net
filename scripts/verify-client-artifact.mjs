@@ -1,10 +1,15 @@
 #!/usr/bin/env node
-import { createHash } from "node:crypto";
 import { lstat, readFile, readdir } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { guides } from "../src/guides/catalog.js";
+import {
+  APPROVED_PUBLIC_URL_HOSTS,
+  approvedHttpsUrl,
+} from "../src/security/publicUrlPolicy.js";
+import { inspectPracticeLibrary } from "./archive-security.mjs";
+import { verifyDownloadApproval } from "./verify-download-approval.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const defaultClientDirectory = path.join(root, "dist", "client");
@@ -17,14 +22,6 @@ const downloadManifestPath = path.join(
 );
 const assetPattern = /^assets\/[A-Za-z0-9][A-Za-z0-9._-]*-[A-Za-z0-9_-]{8}\.(?:css|ico|jpe?g|js|png|svg|webp|woff2?)$/u;
 const publicTextFilePattern = /\.(?:css|html|js|svg)$/iu;
-const approvedPublicUrlHosts = new Set([
-  "patentpractice.jacobdanderson.net",
-  "patents.google.com",
-  "react.dev",
-  "uscode.house.gov",
-  "www.uspto.gov",
-  "www.w3.org",
-]);
 const forbiddenPublicContentPatterns = [
   [/\/Users\/[A-Za-z0-9._~/-]+/u, "absolute macOS path"],
   [/(?:^|[^A-Za-z0-9_])\/home\/[A-Za-z0-9._~/-]+/u, "absolute Linux home path"],
@@ -80,7 +77,11 @@ function scanPublicText(contents, relative, violations) {
     if (pattern.test(contents)) violations.push(`${relative}: contains ${reason}`);
   }
 
-  for (const match of contents.matchAll(/https?:\/\/[^\s"'`<>\\)]+/giu)) {
+  for (const match of contents.matchAll(/https?:\/\/[^\s"'`<>\)]+/giu)) {
+    if (match[0].includes("\\")) {
+      violations.push(`${relative}: contains an escaped or backslash-bearing public URL`);
+      continue;
+    }
     let parsed;
     try {
       parsed = new URL(match[0]);
@@ -94,64 +95,19 @@ function scanPublicText(contents, relative, violations) {
     if (parsed.protocol === "http:" && parsed.hostname !== "www.w3.org") {
       violations.push(`${relative}: contains a non-HTTPS public URL for ${parsed.hostname}`);
     }
-    if (!approvedPublicUrlHosts.has(parsed.hostname)) {
+    if (parsed.protocol === "https:") {
+      try {
+        approvedHttpsUrl(match[0], {
+          approvedHosts: APPROVED_PUBLIC_URL_HOSTS.artifact,
+          label: `${relative} public URL`,
+        });
+      } catch (error) {
+        violations.push(error.message);
+      }
+    } else if (parsed.hostname !== "www.w3.org") {
       violations.push(`${relative}: contains an unapproved public URL host ${parsed.hostname}`);
     }
   }
-}
-
-function zipEntries(archive) {
-  const minimumEocdSize = 22;
-  const maximumCommentSize = 65_535;
-  let eocdOffset = -1;
-  for (
-    let offset = archive.length - minimumEocdSize;
-    offset >= Math.max(0, archive.length - minimumEocdSize - maximumCommentSize);
-    offset -= 1
-  ) {
-    if (archive.readUInt32LE(offset) === 0x06054b50) {
-      eocdOffset = offset;
-      break;
-    }
-  }
-  if (eocdOffset < 0) throw new Error("download is not a supported ZIP archive");
-  if (archive.readUInt16LE(eocdOffset + 4) !== 0 || archive.readUInt16LE(eocdOffset + 6) !== 0) {
-    throw new Error("multi-disk ZIP archives are not permitted");
-  }
-
-  const entryCount = archive.readUInt16LE(eocdOffset + 10);
-  let offset = archive.readUInt32LE(eocdOffset + 16);
-  const entries = [];
-  for (let index = 0; index < entryCount; index += 1) {
-    if (offset + 46 > archive.length || archive.readUInt32LE(offset) !== 0x02014b50) {
-      throw new Error("download has an invalid ZIP central directory");
-    }
-    const flags = archive.readUInt16LE(offset + 8);
-    if ((flags & 0x0001) !== 0) throw new Error("encrypted ZIP entries are not permitted");
-    const nameLength = archive.readUInt16LE(offset + 28);
-    const extraLength = archive.readUInt16LE(offset + 30);
-    const commentLength = archive.readUInt16LE(offset + 32);
-    const nameStart = offset + 46;
-    const nameEnd = nameStart + nameLength;
-    if (nameEnd > archive.length) throw new Error("download has a truncated ZIP entry name");
-    const name = archive.subarray(nameStart, nameEnd).toString("utf8");
-    if (
-      !name ||
-      name.includes("\\") ||
-      name.includes("\0") ||
-      name.startsWith("/") ||
-      /^[A-Za-z]:/u.test(name) ||
-      name.split("/").includes("..")
-    ) {
-      throw new Error(`download contains an unsafe ZIP entry: ${name || "<empty>"}`);
-    }
-    entries.push(name);
-    offset = nameEnd + extraLength + commentLength;
-  }
-  if (new Set(entries).size !== entries.length) {
-    throw new Error("download contains duplicate ZIP entries");
-  }
-  return entries;
 }
 
 async function verifyReviewedDownload(clientDirectory, violations) {
@@ -163,8 +119,12 @@ async function verifyReviewedDownload(clientDirectory, violations) {
     return;
   }
   if (
+    manifest.schemaVersion !== "2.0.0" ||
     manifest.reviewStatus !== "reviewed" ||
     manifest.publicReleaseApproved !== true ||
+    manifest.approvalReceipt?.type !== "github-actions-repository-variable" ||
+    manifest.approvalReceipt?.variable !== "PRACTICE_LIBRARY_APPROVED_SHA256" ||
+    manifest.approvalReceipt?.digestAlgorithm !== "sha256" ||
     manifest.archivePath !== downloadPath ||
     !/^[a-f0-9]{64}$/u.test(manifest.sha256 ?? "") ||
     !Array.isArray(manifest.entries)
@@ -175,13 +135,12 @@ async function verifyReviewedDownload(clientDirectory, violations) {
 
   try {
     const archive = await readFile(path.join(clientDirectory, downloadPath));
-    const digest = createHash("sha256").update(archive).digest("hex");
-    if (digest !== manifest.sha256) {
+    const inspection = await inspectPracticeLibrary(archive, { label: downloadPath });
+    if (inspection.sha256 !== manifest.sha256) {
       violations.push(`${downloadPath}: digest does not match the reviewed archive`);
     }
-    const entries = zipEntries(archive);
-    if (JSON.stringify(entries) !== JSON.stringify(manifest.entries)) {
-      violations.push(`${downloadPath}: entry inventory does not match the reviewed archive`);
+    if (JSON.stringify(inspection.inventory) !== JSON.stringify(manifest.entries)) {
+      violations.push(`${downloadPath}: recursive entry inventory does not match the reviewed archive`);
     }
   } catch (error) {
     violations.push(`${downloadPath}: ${error.message}`);
@@ -219,7 +178,10 @@ async function inspectDirectory(directory, relativeDirectory, files, violations)
   }
 }
 
-export async function verifyClientArtifact(clientDirectory = defaultClientDirectory) {
+export async function verifyClientArtifact(
+  clientDirectory = defaultClientDirectory,
+  { approvedDigest = process.env.PRACTICE_LIBRARY_APPROVED_SHA256 } = {},
+) {
   const resolvedClient = path.resolve(clientDirectory);
   const rootMetadata = await lstat(resolvedClient);
   if (rootMetadata.isSymbolicLink() || !rootMetadata.isDirectory()) {
@@ -228,6 +190,15 @@ export async function verifyClientArtifact(clientDirectory = defaultClientDirect
 
   const files = new Set();
   const violations = [];
+  try {
+    await verifyDownloadApproval({
+      approvedDigest,
+      archivePath: path.join(resolvedClient, downloadPath),
+      manifestPath: downloadManifestPath,
+    });
+  } catch (error) {
+    violations.push(`${downloadPath}: independent approval failed (${error.message})`);
+  }
   await inspectDirectory(resolvedClient, "", files, violations);
 
   const expected = expectedFiles();

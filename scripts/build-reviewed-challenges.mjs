@@ -13,6 +13,10 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import {
   assertValidChallengeBundle,
 } from "../src/challenges/validateChallengeBundle.js";
+import {
+  APPROVED_PUBLIC_URL_HOSTS,
+  approvedHttpsUrl,
+} from "../src/security/publicUrlPolicy.js";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -93,18 +97,16 @@ function isForbiddenPublicKey(key) {
 }
 
 function assertSafeUrl(value, location) {
-  let parsed;
+  let canonical;
   try {
-    parsed = new URL(value);
-  } catch {
-    throw new Error(`${location} must be an absolute URL.`);
+    canonical = approvedHttpsUrl(value, {
+      approvedHosts: APPROVED_PUBLIC_URL_HOSTS.challenge,
+      label: location,
+    });
+  } catch (error) {
+    throw new Error(error.message);
   }
-  if (parsed.protocol !== "https:") {
-    throw new Error(`${location} must use HTTPS.`);
-  }
-  if (parsed.username || parsed.password) {
-    throw new Error(`${location} must not contain URL credentials.`);
-  }
+  const parsed = new URL(canonical);
   for (const key of parsed.searchParams.keys()) {
     if (isForbiddenPublicKey(key)) {
       throw new Error(`${location} must not contain credential query parameters.`);

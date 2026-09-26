@@ -359,6 +359,12 @@ export function attemptReducer(state, action) {
   }
 
   if (action.type === ACTION_TYPES.RESET_ATTEMPT || action.type === ACTION_TYPES.NEW_ATTEMPT) {
+    if (state.readOnly) {
+      throw new AttemptTransitionError(
+        "A read-only saved attempt cannot create a replacement with stale compatibility identities.",
+        { actionType: action.type, phase: state.phase },
+      );
+    }
     return createReplacementAttempt(state, action, timestamp);
   }
 

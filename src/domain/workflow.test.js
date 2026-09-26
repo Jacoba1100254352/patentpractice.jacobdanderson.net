@@ -223,6 +223,12 @@ describe("attempt workflow", () => {
     expect(opened.compatibility.reasons).toEqual(
       expect.arrayContaining([expect.objectContaining({ code: "challenge-hash" })]),
     );
+    expect(() => dispatch(
+      opened,
+      ACTION_TYPES.NEW_ATTEMPT,
+      { confirmAttemptId: opened.attemptId, newAttemptId: "attempt-two" },
+      2,
+    )).toThrow(/stale compatibility identities/iu);
     expect(() => dispatch(opened, ACTION_TYPES.START_DRAFTING, undefined, 1)).toThrow(
       /read-only/,
     );

@@ -44,5 +44,12 @@ jobs:
       - name: Audit dependencies
         run: npm run audit
 
+      - name: Verify independent practice-library approval
+        env:
+          PRACTICE_LIBRARY_APPROVED_SHA256: ${{ vars.PRACTICE_LIBRARY_APPROVED_SHA256 }}
+        run: npm run verify:download-approval
+
       - name: Run complete project checks
+        env:
+          PRACTICE_LIBRARY_APPROVED_SHA256: ${{ vars.PRACTICE_LIBRARY_APPROVED_SHA256 }}
         run: npm run check

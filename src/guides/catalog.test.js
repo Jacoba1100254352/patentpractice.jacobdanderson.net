@@ -3,8 +3,10 @@ import { readFile } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
 
 import { getGuideBySlug, guideCategories, guideHref, guides } from "./catalog.js";
-
-const APPROVED_SOURCE_HOSTS = new Set(["www.uspto.gov", "uscode.house.gov"]);
+import {
+  APPROVED_PUBLIC_URL_HOSTS,
+  approvedHttpsUrl,
+} from "../security/publicUrlPolicy.js";
 
 describe("drafting guide catalog", () => {
   it("has unique, internally consistent routes and sections", () => {
@@ -37,9 +39,10 @@ describe("drafting guide catalog", () => {
 
     for (const guide of guides) {
       for (const source of guide.sources) {
-        const url = new URL(source.href ?? source.url);
-        expect(url.protocol).toBe("https:");
-        expect(APPROVED_SOURCE_HOSTS.has(url.hostname)).toBe(true);
+        expect(() => approvedHttpsUrl(source.href ?? source.url, {
+          approvedHosts: APPROVED_PUBLIC_URL_HOSTS.guide,
+          label: `${guide.slug} source`,
+        })).not.toThrow();
         expect(source.title ?? source.label).toBeTruthy();
       }
     }

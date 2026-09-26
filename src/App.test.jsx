@@ -7,18 +7,25 @@ import axe from "axe-core";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { App } from "./App.jsx";
+import { challenge01ContentDigest, challenge01PlayerFacing } from "./challenges/index.js";
 import { createStarterClaimSet } from "./domain/sessionModel.js";
 import { ACTION_TYPES, attemptReducer, createAttemptState } from "./domain/workflow.js";
+import { engineCompatibility } from "./engine/generated/compatibility.generated.js";
 
 const persistenceMocks = vi.hoisted(() => ({
+  clearAttempts: vi.fn().mockResolvedValue(undefined),
+  delete: vi.fn().mockResolvedValue(true),
   list: vi.fn().mockResolvedValue([]),
+  save: vi.fn().mockImplementation(async (attempt) => attempt),
 }));
 
 vi.mock("./persistence/attemptStore.js", () => ({
   createAttemptStore: () => ({
     backend: vi.fn().mockResolvedValue("memory"),
+    clearAttempts: persistenceMocks.clearAttempts,
+    delete: persistenceMocks.delete,
     list: persistenceMocks.list,
-    save: vi.fn().mockImplementation(async (attempt) => attempt),
+    save: persistenceMocks.save,
   }),
   exportAttemptState: vi.fn(() => "{}"),
 }));
@@ -28,20 +35,25 @@ afterEach(() => {
   globalThis.history.replaceState(null, "", "/");
   globalThis.localStorage?.clear?.();
   persistenceMocks.list.mockReset().mockResolvedValue([]);
+  persistenceMocks.delete.mockReset().mockResolvedValue(true);
+  persistenceMocks.clearAttempts.mockReset().mockResolvedValue(undefined);
+  persistenceMocks.save.mockReset().mockImplementation(async (attempt) => attempt);
   vi.clearAllMocks();
 });
 
-function savedDraftingAttempt(modeId, attemptId) {
+function savedDraftingAttempt(modeId, attemptId, secretText = null) {
+  const initialDraft = { claims: createStarterClaimSet().claims, notes: "" };
+  if (secretText) initialDraft.claims[0].limitations[0].text = secretText;
   const created = createAttemptState({
     attemptId,
-    challengeId: "challenge-01-pressure-history-adaptive-mouse",
-    challengeVersion: "1.0.0",
-    challengeHash: "sha256:challenge01-v1.0.0",
-    engineVersion: "1.0.0",
-    engineHash: "sha256:scopecraft-engine-v1.0.0",
+    challengeId: challenge01PlayerFacing.challengeId,
+    challengeVersion: challenge01PlayerFacing.contentVersion,
+    challengeHash: challenge01ContentDigest,
+    engineVersion: engineCompatibility.version,
+    engineHash: engineCompatibility.hash,
     difficulty: modeId,
     mappingChallenges: [],
-    initialDraft: { claims: createStarterClaimSet().claims, notes: "" },
+    initialDraft,
     now: "2026-08-27T12:00:00.000Z",
   });
   return attemptReducer(created, {
@@ -197,10 +209,12 @@ describe("ScopeCraft playable application", () => {
     expect(await screen.findByDisplayValue("a pressure sensor producing a pressure signal")).toBeInTheDocument();
   });
 
-  it("opens an assigned challenge mode and resumes only a matching saved attempt", async () => {
+  it("never exposes or resumes a saved claim draft until the user explicitly selects it", async () => {
+    const user = userEvent.setup();
+    const confidentialClaimText = "a confidential unreleased pressure sensor arrangement";
     persistenceMocks.list.mockResolvedValue([
       savedDraftingAttempt("examiner", "saved-examiner"),
-      savedDraftingAttempt("guided", "saved-guided"),
+      savedDraftingAttempt("guided", "saved-guided", confidentialClaimText),
     ]);
     globalThis.history.replaceState(
       null,
@@ -210,11 +224,39 @@ describe("ScopeCraft playable application", () => {
 
     render(<App />);
 
+    expect(await screen.findByRole("button", { name: "Saved drafts (2)" })).toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Structured claim editor" })).not.toBeInTheDocument();
+    expect(screen.queryByDisplayValue(confidentialClaimText)).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Saved drafts (2)" }));
+    const savedDrafts = await screen.findByRole("dialog", { name: "Saved drafts" });
+    expect(within(savedDrafts).queryByText(confidentialClaimText)).not.toBeInTheDocument();
+    expect(within(savedDrafts).getByRole("button", { name: "Resume saved-examiner" })).toBeDisabled();
+    await user.click(within(savedDrafts).getByRole("button", { name: "Resume saved-guided" }));
+
     expect(await screen.findByRole("region", { name: "Structured claim editor" })).toBeInTheDocument();
-    expect(screen.getByText("Guided mode")).toBeInTheDocument();
-    expect(
-      await screen.findByText(/most recent attempt for this assigned challenge and mode was restored/iu),
-    ).toBeInTheDocument();
+    expect(screen.getByDisplayValue(confidentialClaimText)).toBeInTheDocument();
+    expect(await screen.findByText(/selected saved draft is now open/iu)).toBeInTheDocument();
+  });
+
+  it("deletes saved browser drafts explicitly and switches an open deleted draft to session-only", async () => {
+    const user = userEvent.setup();
+    const saved = savedDraftingAttempt("practitioner", "saved-current");
+    persistenceMocks.list.mockResolvedValue([saved]);
+    render(<App />);
+
+    await user.click(await screen.findByRole("button", { name: "Saved drafts (1)" }));
+    let dialog = await screen.findByRole("dialog", { name: "Saved drafts" });
+    await user.click(within(dialog).getByRole("button", { name: "Resume saved-current" }));
+    await user.click(screen.getByRole("button", { name: "Saved drafts (1)" }));
+    dialog = await screen.findByRole("dialog", { name: "Saved drafts" });
+    await user.click(within(dialog).getByRole("button", { name: "Delete saved-current" }));
+    const confirmation = await screen.findByRole("dialog", { name: "Delete saved draft?" });
+    await user.click(within(confirmation).getByRole("button", { name: "Delete saved draft" }));
+
+    await waitFor(() => expect(persistenceMocks.delete).toHaveBeenCalledWith("saved-current"));
+    expect(await screen.findByText("Session only")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Save attempt now" })).toBeDisabled();
   });
 
   it("surfaces an invalid assignment link instead of silently treating it as valid", async () => {

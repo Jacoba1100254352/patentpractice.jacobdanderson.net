@@ -19,10 +19,9 @@ import {
 
 import {
   challengeCatalog,
-  challenge01CompatibilityHash,
+  challenge01ContentDigest,
   challenge01EvaluatorData,
   challenge01PlayerFacing,
-  getChallenge01ForMode,
 } from "./challenges/index.js";
 import { AppNavigation } from "./components/AppNavigation.jsx";
 import { ClaimEditor } from "./components/ClaimEditor.jsx";
@@ -43,7 +42,6 @@ import {
 import { ToastRegion } from "./components/ToastRegion.jsx";
 import {
   buildIntroducedTermRegistry,
-  normalizeClaimSet,
   renderClaimText,
   sortClaims,
 } from "./domain/claims.js";
@@ -57,28 +55,32 @@ import {
   buildPlayerPrintModel,
 } from "./domain/playerPrintModel.js";
 import {
-  createEngineChallenge,
-  createStarterClaimSet,
   promoteDependentLimitations,
-  selectCompetitorTargetClaim,
 } from "./domain/sessionModel.js";
 import {
   ACTION_TYPES,
   attemptReducer,
-  createAttemptState,
 } from "./domain/workflow.js";
-import { evaluateClaimSet, mapCompetitorToClaim } from "./engine/evaluator.js";
-import { runPreflight } from "./engine/preflight.js";
-import { scorePortfolio } from "./engine/scoring.js";
+import { engineCompatibility } from "./engine/generated/compatibility.generated.js";
+import {
+  buildChallengeRuntime,
+  buildCompetitorRuntime,
+  buildDebriefRuntime,
+  buildDraftRuntime,
+  claimSetFromDraft,
+  createInitialAttempt,
+  evaluateCompetitorRuntime,
+  evaluateDraftRuntime,
+} from "./engine/runtimeCompatibility.js";
 import { createAttemptStore, exportAttemptState } from "./persistence/attemptStore.js";
 import {
   hasCompletedQuickTour,
   markQuickTourComplete,
 } from "./persistence/tourPreference.js";
 
-const CHALLENGE_HASH = challenge01CompatibilityHash;
-const ENGINE_VERSION = "1.0.0";
-const ENGINE_HASH = "sha256:scopecraft-engine-v1.0.0";
+const CHALLENGE_HASH = challenge01ContentDigest;
+const ENGINE_VERSION = engineCompatibility.version;
+const ENGINE_HASH = engineCompatibility.hash;
 
 const MODE_LABELS = {
   guided: "Guided mode",
@@ -98,37 +100,12 @@ const STAGE_TITLES = {
   debrief: "Portfolio debrief",
 };
 
-function stageForPhase(phase) {
-  if (phase === "office-action") return "office-action";
-  if (["response", "final-action"].includes(phase)) return "amendment";
-  if (["competitor-prediction", "competitor-result"].includes(phase)) return "competitor";
-  if (phase === "debrief") return "debrief";
-  return "drafting";
-}
-
-function createMappingChallenges() {
-  return challenge01EvaluatorData.mappingChallengeRulings.map((ruling) => ({
-    id: ruling.id,
-    prompt: ruling.prompt,
-    challengedFindingId: ruling.challengedFindingId,
-  }));
-}
-
 function createAttempt(modeId = "practitioner") {
-  return createAttemptState({
-    challengeId: challenge01PlayerFacing.challengeId,
-    challengeVersion: challenge01PlayerFacing.contentVersion,
-    challengeHash: CHALLENGE_HASH,
+  return createInitialAttempt({
+    modeId,
     engineVersion: ENGINE_VERSION,
     engineHash: ENGINE_HASH,
-    difficulty: modeId,
-    mappingChallenges: createMappingChallenges(),
-    initialDraft: { claims: createStarterClaimSet().claims, notes: "" },
   });
-}
-
-function claimSetFromDraft(draft) {
-  return normalizeClaimSet({ id: "claim-set", claims: draft?.claims ?? [] });
 }
 
 function useToasts() {
@@ -267,6 +244,8 @@ export function App() {
   const [mappingChoice, setMappingChoice] = useState("");
   const [activeNavId, setActiveNavId] = useState("draft");
   const [storageState, setStorageState] = useState({ ready: false, backend: null });
+  const [savedAttempts, setSavedAttempts] = useState([]);
+  const [durableSaveEnabled, setDurableSaveEnabled] = useState(true);
   const [showFirstUseGuide, setShowFirstUseGuide] = useState(
     () => !hasCompletedQuickTour(),
   );
@@ -315,14 +294,9 @@ export function App() {
     [],
   );
 
-  const stage = stageForPhase(attempt.phase);
-  const playerChallenge = useMemo(
-    () => getChallenge01ForMode(modeId, { stage }),
-    [modeId, stage],
-  );
-  const engineChallenge = useMemo(
-    () => createEngineChallenge(playerChallenge, challenge01EvaluatorData, modeId),
-    [modeId, playerChallenge],
+  const { playerChallenge, engineChallenge } = useMemo(
+    () => buildChallengeRuntime({ modeId, phase: attempt.phase }),
+    [attempt.phase, modeId],
   );
   const claimBudgetTotal = playerChallenge.activeMode.claimBudget.total;
   const availablePrintPackets = useMemo(
@@ -348,21 +322,20 @@ export function App() {
   }, [initialAssignment, modeId, playerChallenge.metadata.title]);
 
   const activeDraft = attempt.phase === "response" ? attempt.response.draft : attempt.draft;
-  const activeClaimSet = useMemo(() => claimSetFromDraft(activeDraft), [activeDraft]);
+  const { claimSet: activeClaimSet, preflight: livePreflight } = useMemo(
+    () => buildDraftRuntime({
+      draft: activeDraft,
+      playerChallenge,
+      engineChallenge,
+      modeId,
+    }),
+    [activeDraft, engineChallenge, modeId, playerChallenge],
+  );
   const activeClaims = useMemo(() => sortClaims(activeClaimSet), [activeClaimSet]);
   const selectedClaim = activeClaims.find((claim) => claim.id === selectedClaimId) ?? activeClaims[0] ?? null;
   const selectedLimitation = selectedClaim?.limitations.find((item) => item.id === selectedLimitationId) ?? null;
   const selectedAnchor = playerChallenge.disclosure.anchors.find((item) => item.id === selectedAnchorId) ?? playerChallenge.disclosure.anchors[0] ?? null;
   const registry = useMemo(() => buildIntroducedTermRegistry(activeClaimSet), [activeClaimSet]);
-  const livePreflight = useMemo(
-    () => runPreflight(activeClaimSet, {
-      challenge: engineChallenge,
-      claimBudget: playerChallenge.activeMode.claimBudget,
-      mode: modeId,
-    }),
-    [activeClaimSet, engineChallenge, modeId, playerChallenge.activeMode.claimBudget],
-  );
-
   useEffect(() => {
     if (!selectedClaimId && activeClaims[0]) setSelectedClaimId(activeClaims[0].id);
     if (!selectedAnchorId && playerChallenge.disclosure.anchors[0]) {
@@ -401,7 +374,8 @@ export function App() {
             `${globalThis.location.pathname}${nextSearch ? `?${nextSearch}` : ""}${globalThis.location.hash ?? ""}`,
           );
         }
-        const saved = freshRequested ? [] : await store.list();
+        const saved = await store.list();
+        if (!cancelled) setSavedAttempts(saved);
         if (!cancelled && freshRequested) {
           const freshMode = assignment.valid ? assignment.modeId : initialMode;
           setAttempt(createAttempt(freshMode));
@@ -409,26 +383,6 @@ export function App() {
           setSelectedClaimId(null);
           setSelectedLimitationId(null);
           setActiveNavId("draft");
-        }
-        const resumable = saved.find((candidate) => {
-          if (candidate.readOnly) return false;
-          if (assignment.status === "invalid") return false;
-          if (!assignment.valid) return true;
-          return (
-            candidate.challenge?.id === assignment.challengeId
-            && candidate.difficulty === assignment.modeId
-          );
-        });
-        if (!cancelled && resumable) {
-          setAttempt(resumable);
-          setModeId(resumable.difficulty);
-          announce(
-            assignment.valid
-              ? "Your most recent attempt for this assigned challenge and mode was restored."
-              : "Your most recent compatible attempt was restored from this browser.",
-            "success",
-            "Attempt resumed",
-          );
         }
         if (!cancelled) setStorageState({ ready: true, backend });
       } catch {
@@ -445,12 +399,18 @@ export function App() {
   }, [announce, store]);
 
   useEffect(() => {
-    if (!hasHydrated.current || !attempt.persistence.dirty) return undefined;
+    if (!hasHydrated.current || !durableSaveEnabled || !attempt.persistence.dirty) {
+      return undefined;
+    }
     const revision = attempt.revision;
     const attemptId = attempt.attemptId;
     const timer = globalThis.setTimeout(async () => {
       try {
-        await store.save(attempt);
+        const saved = await store.save(attempt);
+        setSavedAttempts((current) => [
+          saved,
+          ...current.filter((candidate) => candidate.attemptId !== saved.attemptId),
+        ].sort((left, right) => right.updatedAt.localeCompare(left.updatedAt)).slice(0, 20));
         setAttempt((current) => {
           if (current.attemptId !== attemptId || current.revision !== revision) return current;
           return attemptReducer(current, {
@@ -463,7 +423,7 @@ export function App() {
       }
     }, 650);
     return () => globalThis.clearTimeout(timer);
-  }, [announce, attempt, store]);
+  }, [announce, attempt, durableSaveEnabled, store]);
 
   useEffect(() => {
     if (!printModel) return undefined;
@@ -641,10 +601,12 @@ export function App() {
       announce("Resolve the blocking mechanical findings in the inspector before submission.", "warning", "Submission blocked");
       return;
     }
-    const evaluation = evaluateClaimSet(activeClaimSet, engineChallenge, {
+    const evaluation = evaluateDraftRuntime({
+      claimSet: activeClaimSet,
       preflight: livePreflight,
-      mode: modeId,
-      claimBudget: playerChallenge.activeMode.claimBudget,
+      playerChallenge,
+      engineChallenge,
+      modeId,
     });
     dispatch({ type: ACTION_TYPES.SUBMIT_APPLICATION, payload: { officeAction: evaluation } });
     setActiveNavId("examiner");
@@ -681,10 +643,12 @@ export function App() {
   };
 
   const confirmResponseSubmission = () => {
-    const evaluation = evaluateClaimSet(activeClaimSet, engineChallenge, {
+    const evaluation = evaluateDraftRuntime({
+      claimSet: activeClaimSet,
       preflight: livePreflight,
-      mode: modeId,
-      claimBudget: playerChallenge.activeMode.claimBudget,
+      playerChallenge,
+      engineChallenge,
+      modeId,
     });
     dispatch({ type: ACTION_TYPES.SUBMIT_RESPONSE, payload: { finalAction: evaluation } });
     setModal(null);
@@ -696,13 +660,13 @@ export function App() {
     setActiveNavId("examiner");
   };
 
-  const amendedClaimSet = useMemo(
-    () => claimSetFromDraft(attempt.snapshots.amended?.draft ?? attempt.response.draft ?? attempt.draft),
-    [attempt.draft, attempt.response.draft, attempt.snapshots.amended],
-  );
-  const competitorClaim = useMemo(
-    () => selectCompetitorTargetClaim(amendedClaimSet, attempt.finalAction),
-    [amendedClaimSet, attempt.finalAction],
+  const { claimSet: amendedClaimSet, targetClaim: competitorClaim } = useMemo(
+    () => buildCompetitorRuntime({
+      draft: attempt.snapshots.amended?.draft ?? attempt.response.draft ?? attempt.draft,
+      finalAction: attempt.finalAction,
+      engineChallenge,
+    }),
+    [attempt.draft, attempt.finalAction, attempt.response.draft, attempt.snapshots.amended, engineChallenge],
   );
 
   const updatePrediction = (limitationId, status) => {
@@ -717,12 +681,11 @@ export function App() {
       announce("No claim is available for the design-around comparison.", "warning");
       return;
     }
-    const result = mapCompetitorToClaim(
-      amendedClaimSet,
-      competitorClaim,
+    const result = evaluateCompetitorRuntime({
+      claimSet: amendedClaimSet,
+      targetClaim: competitorClaim,
       engineChallenge,
-      engineChallenge.competitor,
-    );
+    });
     dispatch({
       type: ACTION_TYPES.SUBMIT_COMPETITOR_PREDICTION,
       payload: { prediction: attempt.competitor.prediction ?? {}, result },
@@ -730,16 +693,13 @@ export function App() {
   };
 
   const openDebrief = () => {
-    const score = scorePortfolio({
+    const score = buildDebriefRuntime({
       claimSet: amendedClaimSet,
-      challenge: engineChallenge,
-      evaluation: attempt.finalAction,
-      competitorMappings: attempt.competitor.result ? [attempt.competitor.result] : [],
-      preflight: runPreflight(amendedClaimSet, {
-        challenge: engineChallenge,
-        claimBudget: playerChallenge.activeMode.claimBudget,
-        mode: modeId,
-      }),
+      finalAction: attempt.finalAction,
+      competitorResult: attempt.competitor.result,
+      playerChallenge,
+      engineChallenge,
+      modeId,
     });
     dispatch({ type: ACTION_TYPES.OPEN_DEBRIEF, payload: { debrief: score } });
     setActiveNavId("reports");
@@ -753,7 +713,12 @@ export function App() {
     setSelectedLimitationId(null);
     setModal(null);
     setActiveNavId("draft");
-    announce("A fresh attempt is ready. Your completed attempt remains in local history.", "success");
+    announce(
+      durableSaveEnabled
+        ? "A fresh attempt is ready. The prior attempt remains in Saved drafts."
+        : "A fresh session-only attempt is ready. The prior attempt was not added to browser storage.",
+      "success",
+    );
   };
 
   const exportAttempt = () => {
@@ -762,10 +727,22 @@ export function App() {
   };
 
   const saveNow = async () => {
+    if (!durableSaveEnabled) {
+      announce(
+        "Session-only mode is active. Turn browser saving back on in Settings before saving.",
+        "warning",
+        "Not saved",
+      );
+      return;
+    }
     const revision = attempt.revision;
     const attemptId = attempt.attemptId;
     try {
-      await store.save(attempt);
+      const saved = await store.save(attempt);
+      setSavedAttempts((current) => [
+        saved,
+        ...current.filter((candidate) => candidate.attemptId !== saved.attemptId),
+      ].sort((left, right) => right.updatedAt.localeCompare(left.updatedAt)).slice(0, 20));
       setAttempt((current) => current.attemptId === attemptId && current.revision === revision
         ? attemptReducer(current, {
           type: ACTION_TYPES.MARK_SAVED,
@@ -775,6 +752,93 @@ export function App() {
       announce("Attempt saved in this browser.", "success");
     } catch {
       announce("The browser could not save this attempt yet.", "warning", "Save delayed");
+    }
+  };
+
+  const openSavedAttempts = async () => {
+    try {
+      const saved = await store.list();
+      setSavedAttempts(saved);
+      setModal({ type: "saved-attempts" });
+    } catch {
+      announce("Saved drafts could not be opened from browser storage.", "warning", "Saved drafts unavailable");
+    }
+  };
+
+  const changeDurableSaving = (enabled) => {
+    setDurableSaveEnabled(enabled);
+    announce(
+      enabled
+        ? "Browser saving is enabled. New edits will be retained under the 90-day policy."
+        : "Session-only mode is active. Existing saved drafts remain available until you delete them.",
+      enabled ? "success" : "warning",
+      enabled ? "Browser saving enabled" : "Session-only mode",
+    );
+  };
+
+  const resumeSavedAttempt = (saved) => {
+    const assignment = assignmentRef.current;
+    if (
+      assignment.valid
+      && (
+        saved.challenge?.id !== assignment.challengeId
+        || saved.difficulty !== assignment.modeId
+      )
+    ) {
+      announce(
+        "That saved draft does not match the challenge and mode selected by this assignment link.",
+        "warning",
+        "Resume blocked",
+      );
+      return;
+    }
+    setAttempt(saved);
+    setModeId(saved.difficulty);
+    setSelectedClaimId(null);
+    setSelectedLimitationId(null);
+    setActiveNavId("draft");
+    setModal(null);
+    announce(
+      saved.readOnly
+        ? "The saved draft is open for review only because its challenge or engine version is no longer current."
+        : "The selected saved draft is now open in this tab.",
+      saved.readOnly ? "warning" : "success",
+      saved.readOnly ? "Read-only draft opened" : "Draft resumed",
+    );
+  };
+
+  const deleteSavedAttempt = async (saved) => {
+    try {
+      await store.delete(saved.attemptId);
+      const remaining = await store.list();
+      setSavedAttempts(remaining);
+      if (saved.attemptId === attempt.attemptId) setDurableSaveEnabled(false);
+      setModal({ type: "saved-attempts" });
+      announce(
+        saved.attemptId === attempt.attemptId
+          ? "The saved copy was deleted. The open draft remains only in this tab until browser saving is re-enabled."
+          : "The selected saved draft was deleted from this browser.",
+        "success",
+        "Saved draft deleted",
+      );
+    } catch {
+      announce("The saved draft could not be deleted from every active browser-storage backend.", "warning", "Delete incomplete");
+    }
+  };
+
+  const clearSavedAttempts = async () => {
+    try {
+      await store.clearAttempts();
+      setSavedAttempts([]);
+      setDurableSaveEnabled(false);
+      setModal(null);
+      announce(
+        "All saved drafts were deleted from this browser. The open draft remains session-only in this tab.",
+        "success",
+        "Saved drafts cleared",
+      );
+    } catch {
+      announce("Saved drafts could not be cleared from every active browser-storage backend.", "warning", "Clear incomplete");
     }
   };
 
@@ -1055,6 +1119,25 @@ export function App() {
     if (modal?.type === "restart") {
       return <><button type="button" className="secondary-button" onClick={() => setModal(null)}>Keep this attempt</button><button type="button" className="danger-button" onClick={confirmRestart}>Start fresh</button></>;
     }
+    if (modal?.type === "saved-attempts") {
+      return <button type="button" className="secondary-button" onClick={() => setModal(null)}>Close</button>;
+    }
+    if (modal?.type === "delete-saved-confirm") {
+      return (
+        <>
+          <button type="button" className="secondary-button" onClick={() => setModal({ type: "saved-attempts" })}>Keep saved draft</button>
+          <button type="button" className="danger-button" onClick={() => deleteSavedAttempt(modal.attempt)}>Delete saved draft</button>
+        </>
+      );
+    }
+    if (modal?.type === "clear-saved-confirm") {
+      return (
+        <>
+          <button type="button" className="secondary-button" onClick={() => setModal({ type: "saved-attempts" })}>Keep saved drafts</button>
+          <button type="button" className="danger-button" onClick={clearSavedAttempts}>Delete all saved drafts</button>
+        </>
+      );
+    }
     return null;
   })();
 
@@ -1154,9 +1237,75 @@ export function App() {
     if (modal.type === "response-review") return <ClaimReview original={attempt.snapshots.submitted?.draft} amended={attempt.response.draft} />;
     if (modal.type === "claim-history") return <ClaimReview original={attempt.snapshots.submitted?.draft ?? attempt.draft} amended={attempt.snapshots.amended?.draft ?? attempt.response.draft ?? attempt.draft} />;
     if (modal.type === "competitor-summary") return <div className="modal-prose"><p>{attempt.competitor.result?.conclusion}</p><p>{attempt.competitor.result?.recordBoundary}</p></div>;
-    if (modal.type === "restart") return <p>This starts a new local attempt. The completed attempt remains saved and can still be exported.</p>;
+    if (modal.type === "restart") return <p>{durableSaveEnabled ? "This starts a new local attempt. The prior attempt remains in Saved drafts and can still be exported." : "This starts a new session-only attempt. The prior in-memory attempt will be replaced, so export it first if you need a copy."}</p>;
+    if (modal.type === "saved-attempts") {
+      const assignment = assignmentRef.current;
+      return (
+        <div className="saved-drafts">
+          <section className="modal-callout" data-tone="warning">
+            <strong>Private browser storage</strong>
+            <p>Claim drafts may contain confidential work. ScopeCraft never resumes one automatically. Choose a draft explicitly, or delete records before another person uses this browser profile.</p>
+            <small>Records expire after 90 days and are limited to the 20 most recent drafts. Session-only mode is available in Settings.</small>
+          </section>
+          <div className="settings-list">
+            <label><input type="checkbox" checked={durableSaveEnabled} onChange={(event) => changeDurableSaving(event.target.checked)} /><span><strong>Save new edits in this browser</strong><small>Turn this off to keep the open draft only in this tab.</small></span></label>
+          </div>
+          {savedAttempts.length ? (
+            <ul className="saved-draft-list">
+              {savedAttempts.map((saved) => {
+                const assignmentMismatch = assignment.valid && (
+                  saved.challenge?.id !== assignment.challengeId
+                  || saved.difficulty !== assignment.modeId
+                );
+                return (
+                  <li key={saved.attemptId}>
+                    <div className="saved-draft-copy">
+                      <strong>{MODE_LABELS[saved.difficulty] ?? saved.difficulty}</strong>
+                      <span>{STAGE_TITLES[saved.phase] ?? saved.phase} · Updated {new Date(saved.updatedAt).toLocaleString()}</span>
+                      {saved.readOnly ? <small>Read-only because its challenge or engine version is no longer current.</small> : null}
+                      {assignmentMismatch ? <small>This assignment link selects a different challenge or mode.</small> : null}
+                    </div>
+                    <div className="saved-draft-actions">
+                      <button
+                        type="button"
+                        className="secondary-button"
+                        disabled={assignmentMismatch}
+                        onClick={() => resumeSavedAttempt(saved)}
+                        aria-label={`${saved.readOnly ? "Review" : "Resume"} ${saved.attemptId}`}
+                      >
+                        {saved.readOnly ? "Review" : "Resume"}
+                      </button>
+                      <button
+                        type="button"
+                        className="danger-button"
+                        onClick={() => setModal({ type: "delete-saved-confirm", attempt: saved })}
+                        aria-label={`Delete ${saved.attemptId}`}
+                      >
+                        Delete
+                      </button>
+                    </div>
+                  </li>
+                );
+              })}
+            </ul>
+          ) : <p>No saved drafts are stored in this browser.</p>}
+          {savedAttempts.length ? (
+            <button type="button" className="danger-button saved-draft-clear" onClick={() => setModal({ type: "clear-saved-confirm" })}>
+              Clear all saved drafts
+            </button>
+          ) : null}
+        </div>
+      );
+    }
+    if (modal.type === "delete-saved-confirm") {
+      return <p>Delete this saved browser copy? If it is currently open, the in-memory draft will remain in this tab and browser saving will switch to session-only.</p>;
+    }
+    if (modal.type === "clear-saved-confirm") {
+      return <p>Delete every saved ScopeCraft draft from this browser? The open draft will remain only in this tab, and browser saving will switch to session-only.</p>;
+    }
     if (modal.type === "settings") return (
       <div className="settings-list">
+        <label><input type="checkbox" checked={durableSaveEnabled} onChange={(event) => changeDurableSaving(event.target.checked)} /><span><strong>Save drafts in this browser</strong><small>When off, edits remain only in this tab. Saved drafts expire after 90 days and are limited to the 20 most recent records.</small></span></label>
         <label><input type="checkbox" checked={ghostTextEnabled} onChange={(event) => setGhostTextEnabled(event.target.checked)} /><span><strong>Mechanical ghost prompt</strong><small>Shows only structural drafting guidance, never a hidden substantive answer.</small></span></label>
         <label><input type="checkbox" checked={!evidenceCollapsed} onChange={(event) => setEvidenceCollapsed(!event.target.checked)} /><span><strong>Evidence rail</strong><small>Keep the disclosure and prior-art rail open while drafting.</small></span></label>
         <label><input type="checkbox" checked={!inspectorCollapsed} onChange={(event) => setInspectorCollapsed(!event.target.checked)} /><span><strong>Inspector rail</strong><small>Keep terms, support, and preflight findings visible.</small></span></label>
@@ -1181,6 +1330,9 @@ export function App() {
     "claim-history": "Claim-set history",
     "competitor-summary": "Design-around record",
     restart: "Start a new attempt?",
+    "saved-attempts": "Saved drafts",
+    "delete-saved-confirm": "Delete saved draft?",
+    "clear-saved-confirm": "Delete all saved drafts?",
     settings: "Workspace settings",
   }[modal?.type] ?? "ScopeCraft";
 
@@ -1202,10 +1354,17 @@ export function App() {
           ) : (
             <>
               <span className="autosave-status" title={`Storage: ${storageState.backend ?? "initializing"}`}>
-                {attempt.persistence.dirty ? <FloppyDisk size={14} aria-hidden="true" /> : <CloudCheck size={14} aria-hidden="true" />}
-                {attempt.persistence.dirty ? "Saving locally" : storageState.ready ? "Saved locally" : "Opening local save"}
+                {!durableSaveEnabled || attempt.persistence.dirty ? <FloppyDisk size={14} aria-hidden="true" /> : <CloudCheck size={14} aria-hidden="true" />}
+                {!durableSaveEnabled
+                  ? "Session only"
+                  : attempt.persistence.dirty
+                    ? "Saving locally"
+                    : storageState.ready ? "Saved locally" : "Opening local save"}
               </span>
-              <button type="button" className="icon-button" onClick={saveNow} aria-label="Save attempt now" title="Save now"><FloppyDisk size={17} aria-hidden="true" /></button>
+              <button type="button" className="quiet-button saved-drafts-button" onClick={openSavedAttempts}>
+                Saved drafts ({savedAttempts.length})
+              </button>
+              <button type="button" className="icon-button" onClick={saveNow} aria-label="Save attempt now" title={durableSaveEnabled ? "Save now" : "Session-only mode"} disabled={!durableSaveEnabled}><FloppyDisk size={17} aria-hidden="true" /></button>
               <button type="button" className="icon-button" onClick={exportAttempt} aria-label="Export attempt" title="Export attempt"><DownloadSimple size={17} aria-hidden="true" /></button>
             </>
           )}
@@ -1225,6 +1384,11 @@ export function App() {
                 <button type="button" className="quiet-button rail-toggle" onClick={toggleEvidence} aria-pressed={!evidenceCollapsed}><Columns size={15} aria-hidden="true" /> Evidence</button>
                 <button type="button" className="quiet-button rail-toggle" onClick={toggleInspector} aria-pressed={!inspectorCollapsed}><SidebarSimple size={15} aria-hidden="true" /> Inspector</button>
               </>
+            ) : null}
+            {!isGuideRoute ? (
+              <button type="button" className="quiet-button saved-drafts-mobile-entry" onClick={openSavedAttempts}>
+                Saved ({savedAttempts.length})
+              </button>
             ) : null}
             {!isGuideRoute ? (
               <button

@@ -313,6 +313,23 @@ test(
       path.join(temporaryRoot, "deploy", "nginx.conf.example"),
       "utf8",
     );
+    const plaintextRedirect = nginxConfig.match(
+      /server\s*\{\s*listen\s+80;\s*listen\s+\[::\]:80;\s*server_name\s+patentpractice\.example\.com;[\s\S]*?return\s+308\s+https:\/\/patentpractice\.example\.com\$request_uri;\s*\}/u,
+    )?.[0];
+    assert.ok(plaintextRedirect, "the exact plaintext host redirects to HTTPS");
+    assert.doesNotMatch(plaintextRedirect, /\broot\b|\btry_files\b/u);
+    assert.match(
+      nginxConfig,
+      /server\s*\{\s*listen\s+80\s+default_server;\s*listen\s+\[::\]:80\s+default_server;\s*server_name\s+_;\s*return\s+444;\s*\}/u,
+    );
+    assert.match(
+      nginxConfig,
+      /server\s*\{\s*listen\s+443\s+ssl\s+default_server;\s*listen\s+\[::\]:443\s+ssl\s+default_server;\s*server_name\s+_;\s*ssl_reject_handshake\s+on;\s*\}/u,
+    );
+    assert.match(
+      nginxConfig,
+      /server\s*\{\s*listen\s+443\s+ssl;\s*listen\s+\[::\]:443\s+ssl;\s*http2\s+on;\s*server_name\s+patentpractice\.example\.com;/u,
+    );
     assert.match(nginxConfig, /root\s+\/srv\/scopecraft\/dist\/client;/u);
     assert.match(nginxConfig, /try_files\s+\$uri\s+\$uri\/\s+@scopecraft_app;/u);
     assert.match(
@@ -343,6 +360,10 @@ test(
         new RegExp(`add_header\\s+${header}\\s+"?${value.replace(/[()]/gu, "\\$&")}"?\\s+always;`, "u"),
       );
     }
+    assert.match(
+      nginxConfig,
+      /add_header\s+Strict-Transport-Security\s+"max-age=31536000; includeSubDomains"\s+always;/u,
+    );
     assert.match(nginxConfig, /location\s+~\s+\(\^\|\/\)\\\./u);
     assert.match(nginxConfig, /location\s+~\*\s+"%\[0-9a-f\]\[0-9a-f\]"/u);
     assert.match(nginxConfig, /location\s+~\*\s+\/\[\^\/\]\+\\\./u);

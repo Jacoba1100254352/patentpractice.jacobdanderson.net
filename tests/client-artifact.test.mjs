@@ -7,6 +7,12 @@ import test from "node:test";
 import { guides } from "../src/guides/catalog.js";
 import { verifyClientArtifact } from "../scripts/verify-client-artifact.mjs";
 
+const approvedDigest = "1866160df86ed088decc8da7c6ca12170377b90eb4f2b1cd7b4d16897bb9cbb0";
+
+function verifyArtifact(artifact, options = {}) {
+  return verifyClientArtifact(artifact, { approvedDigest, ...options });
+}
+
 async function writePublicFile(root, relative, contents = "approved public fixture\n") {
   const destination = path.join(root, relative);
   await mkdir(path.dirname(destination), { recursive: true });
@@ -44,7 +50,7 @@ async function createValidArtifact(t) {
 
 test("accepts only the complete approved client artifact shape", async (t) => {
   const artifact = await createValidArtifact(t);
-  const result = await verifyClientArtifact(artifact);
+  const result = await verifyArtifact(artifact);
 
   assert.equal(result.clientDirectory, artifact);
   assert.equal(result.fileCount, guides.length + 6);
@@ -56,7 +62,7 @@ test("rejects private files, source maps, and source directories", async (t) => 
       const artifact = await createValidArtifact(t);
       await writePublicFile(artifact, relative, "PRIVATE_SENTINEL\n");
 
-      await assert.rejects(verifyClientArtifact(artifact), new RegExp(relative.replaceAll(".", "\\."), "u"));
+      await assert.rejects(verifyArtifact(artifact), new RegExp(relative.replaceAll(".", "\\."), "u"));
     });
   }
 });
@@ -65,18 +71,18 @@ test("rejects an unhashed asset that would be unsafe to cache immutably", async 
   const artifact = await createValidArtifact(t);
   await writePublicFile(artifact, "assets/stable-name.js");
 
-  await assert.rejects(verifyClientArtifact(artifact), /assets\/stable-name\.js/iu);
+  await assert.rejects(verifyArtifact(artifact), /assets\/stable-name\.js/iu);
 });
 
 test("rejects confidential content and unapproved public URL hosts", async (t) => {
   for (const [contents, expected] of [
     ["const source = '/Users/example/Confidential/matter.docx';\n", /absolute macOS path|private workspace path/iu],
-    ["const source = 'https://unreviewed.example/source';\n", /unapproved public URL host/iu],
+    ["const source = 'https://unreviewed.example/source';\n", /unapproved hostname/iu],
   ]) {
     await t.test(expected.source, async (t) => {
       const artifact = await createValidArtifact(t);
       await writePublicFile(artifact, "assets/leak-AbCd1234.js", contents);
-      await assert.rejects(verifyClientArtifact(artifact), expected);
+      await assert.rejects(verifyArtifact(artifact), expected);
     });
   }
 });
@@ -89,7 +95,7 @@ test("rejects a changed practice-library archive until its review manifest advan
   );
 
   await assert.rejects(
-    verifyClientArtifact(artifact),
+    verifyArtifact(artifact),
     /digest does not match the reviewed archive|not a supported ZIP archive/iu,
   );
 });
@@ -100,7 +106,7 @@ test("rejects symbolic links even when their names otherwise look public", async
   const link = path.join(artifact, "assets", "linked-AbCd1234.js");
   await symlink(target, link);
 
-  await assert.rejects(verifyClientArtifact(artifact), /linked-AbCd1234\.js: symbolic links/u);
+  await assert.rejects(verifyArtifact(artifact), /linked-AbCd1234\.js: symbolic links/u);
 });
 
 test("rejects an artifact that omits a required route shell", async (t) => {
@@ -109,7 +115,15 @@ test("rejects an artifact that omits a required route shell", async (t) => {
   await rm(missingGuide);
 
   await assert.rejects(
-    verifyClientArtifact(artifact),
+    verifyArtifact(artifact),
     new RegExp(`guides/${guides[0].slug}/index\\.html: required public file is missing`, "u"),
+  );
+});
+
+test("rejects an otherwise valid artifact without independent approval", async (t) => {
+  const artifact = await createValidArtifact(t);
+  await assert.rejects(
+    verifyArtifact(artifact, { approvedDigest: null }),
+    /independent approval failed/iu,
   );
 });

@@ -15,6 +15,13 @@ const EXPORT_FORMAT = "scopecraft-attempt";
 const EXPORT_FORMAT_VERSION = 1;
 const sharedMemoryStores = new Map();
 
+export const ATTEMPT_RETENTION_POLICY = Object.freeze({
+  maxAgeDays: 90,
+  maxAttempts: 20,
+  maxRecordBytes: 1024 * 1024,
+  maxTotalBytes: 8 * 1024 * 1024,
+});
+
 export class AttemptPersistenceError extends Error {
   constructor(message, cause) {
     super(message, { cause });
@@ -88,6 +95,7 @@ function storageProbe(storage, namespace) {
 
 function createLocalStorageAdapter(storage, namespace) {
   const indexKey = `${namespace}:index`;
+  const recordPrefix = `${namespace}:attempt:`;
   const recordKey = (id) => `${namespace}:attempt:${id}`;
 
   function readIndex() {
@@ -103,6 +111,17 @@ function createLocalStorageAdapter(storage, namespace) {
 
   function writeIndex(ids) {
     storage.setItem(indexKey, JSON.stringify(Array.from(new Set(ids))));
+  }
+
+  function enumerateIds() {
+    const ids = new Set(readIndex());
+    if (typeof storage.key === "function" && Number.isInteger(storage.length)) {
+      for (let index = 0; index < storage.length; index += 1) {
+        const key = storage.key(index);
+        if (key?.startsWith(recordPrefix)) ids.add(key.slice(recordPrefix.length));
+      }
+    }
+    return Array.from(ids);
   }
 
   return {
@@ -124,21 +143,22 @@ function createLocalStorageAdapter(storage, namespace) {
     async getAll() {
       const records = [];
       const validIds = [];
-      for (const id of readIndex()) {
+      const indexedIds = enumerateIds();
+      for (const id of indexedIds) {
         const serialized = storage.getItem(recordKey(id));
         if (!serialized) continue;
         try {
           records.push(JSON.parse(serialized));
           validIds.push(id);
         } catch {
-          // A corrupt record is omitted, while healthy attempts remain available.
+          storage.removeItem(recordKey(id));
         }
       }
-      if (validIds.length !== readIndex().length) writeIndex(validIds);
+      if (validIds.length !== indexedIds.length) writeIndex(validIds);
       return records;
     },
     async clear() {
-      readIndex().forEach((id) => storage.removeItem(recordKey(id)));
+      enumerateIds().forEach((id) => storage.removeItem(recordKey(id)));
       storage.removeItem(indexKey);
     },
   };
@@ -231,32 +251,85 @@ export function createAttemptStore({
   memory,
   openDB: openDBImpl = openDB,
   adapter: suppliedAdapter,
+  retentionPolicy = ATTEMPT_RETENTION_POLICY,
+  now = () => Date.now(),
 } = {}) {
   const memoryAdapter = createMemoryAdapter(memory ?? getSharedMemory(namespace));
+  const knownAdapters = new Set([memoryAdapter]);
   let adapterPromise;
   let activeAdapter;
 
+  function nowMilliseconds() {
+    const value = typeof now === "function" ? now() : now;
+    const date = value instanceof Date ? value : new Date(value);
+    if (Number.isNaN(date.getTime())) {
+      throw new AttemptPersistenceError("Attempt retention clock is invalid.");
+    }
+    return date.getTime();
+  }
+
+  function recordSize(record) {
+    return new TextEncoder().encode(JSON.stringify(record)).byteLength;
+  }
+
+  function recordTimestamp(record) {
+    const timestamp = Date.parse(record.updatedAt);
+    if (Number.isNaN(timestamp)) {
+      throw new AttemptValidationError("Attempt updatedAt is invalid.");
+    }
+    return timestamp;
+  }
+
+  function assertRecordWithinPolicy(record) {
+    const bytes = recordSize(record);
+    if (bytes > retentionPolicy.maxRecordBytes) {
+      throw new AttemptPersistenceError(
+        `Attempt ${record.attemptId} exceeds the ${retentionPolicy.maxRecordBytes}-byte local-storage limit. Export a smaller record instead.`,
+      );
+    }
+    const age = nowMilliseconds() - recordTimestamp(record);
+    if (age > retentionPolicy.maxAgeDays * 24 * 60 * 60 * 1000) {
+      throw new AttemptPersistenceError(
+        `Attempt ${record.attemptId} is outside the ${retentionPolicy.maxAgeDays}-day retention window.`,
+      );
+    }
+    return bytes;
+  }
+
   async function chooseAdapter() {
-    if (suppliedAdapter) return suppliedAdapter;
+    if (suppliedAdapter) {
+      knownAdapters.add(suppliedAdapter);
+      return suppliedAdapter;
+    }
+
+    const storage = resolveLocalStorage(explicitStorage);
+    const localStorageAdapter = storageProbe(storage, namespace)
+      ? createLocalStorageAdapter(storage, namespace)
+      : null;
+    if (localStorageAdapter) knownAdapters.add(localStorageAdapter);
 
     if (!forceFallback && (typeof globalThis.indexedDB !== "undefined" || openDBImpl !== openDB)) {
       try {
-        return await createIndexedDbAdapter({ openDBImpl, databaseName, storeName });
+        const indexedDbAdapter = await createIndexedDbAdapter({
+          openDBImpl,
+          databaseName,
+          storeName,
+        });
+        knownAdapters.add(indexedDbAdapter);
+        return indexedDbAdapter;
       } catch {
         // Storage can be disabled in private or policy-controlled browsing contexts.
       }
     }
 
-    const storage = resolveLocalStorage(explicitStorage);
-    if (storageProbe(storage, namespace)) {
-      return createLocalStorageAdapter(storage, namespace);
-    }
+    if (localStorageAdapter) return localStorageAdapter;
     return memoryAdapter;
   }
 
   async function getAdapter() {
     if (!adapterPromise) adapterPromise = chooseAdapter();
     activeAdapter = await adapterPromise;
+    knownAdapters.add(activeAdapter);
     return activeAdapter;
   }
 
@@ -281,10 +354,73 @@ export function createAttemptStore({
     }
   }
 
+  async function runAcrossKnownAdapters(method, ...args) {
+    await getAdapter();
+    const results = await Promise.allSettled(
+      Array.from(knownAdapters, (candidate) => candidate[method](...args)),
+    );
+    const failure = results.find((result) => result.status === "rejected");
+    if (failure) {
+      throw new AttemptPersistenceError(
+        `Attempt storage ${method} did not complete across every active local backend.`,
+        failure.reason,
+      );
+    }
+    return results.map((result) => result.value);
+  }
+
+  async function pruneAndOpen(expected = compatibility) {
+    const records = await run("getAll");
+    const currentTime = nowMilliseconds();
+    const candidates = [];
+    const rejectedIds = new Set();
+
+    for (const record of records) {
+      try {
+        assertValidAttemptState(record);
+        const bytes = recordSize(record);
+        const timestamp = recordTimestamp(record);
+        if (
+          bytes > retentionPolicy.maxRecordBytes
+          || currentTime - timestamp > retentionPolicy.maxAgeDays * 24 * 60 * 60 * 1000
+        ) {
+          rejectedIds.add(record.attemptId);
+          continue;
+        }
+        candidates.push({ bytes, record, timestamp });
+      } catch {
+        if (typeof record?.attemptId === "string") rejectedIds.add(record.attemptId);
+      }
+    }
+
+    candidates.sort((left, right) => right.timestamp - left.timestamp);
+    const retained = [];
+    let retainedBytes = 0;
+    for (const candidate of candidates) {
+      if (
+        retained.length >= retentionPolicy.maxAttempts
+        || retainedBytes + candidate.bytes > retentionPolicy.maxTotalBytes
+      ) {
+        rejectedIds.add(candidate.record.attemptId);
+        continue;
+      }
+      retained.push(candidate.record);
+      retainedBytes += candidate.bytes;
+    }
+
+    for (const attemptId of rejectedIds) {
+      await runAcrossKnownAdapters("delete", attemptId);
+    }
+
+    return retained.map((record) => openAttemptState(record, expected));
+  }
+
   async function saveAttempt(attempt) {
     assertValidAttemptState(attempt);
     const record = cloneJson(attempt);
+    assertRecordWithinPolicy(record);
     await run("put", record);
+    await pruneAndOpen();
     return openAttemptState(record, compatibility);
   }
 
@@ -296,21 +432,12 @@ export function createAttemptStore({
   }
 
   async function deleteAttempt(attemptId) {
-    return run("delete", requireAttemptId(attemptId));
+    const results = await runAcrossKnownAdapters("delete", requireAttemptId(attemptId));
+    return results.some(Boolean);
   }
 
   async function listAttempts(expected = compatibility) {
-    const records = await run("getAll");
-    const opened = [];
-    for (const record of records) {
-      try {
-        assertValidAttemptState(record);
-        opened.push(openAttemptState(record, expected));
-      } catch {
-        // One corrupt record must not make all saved attempts inaccessible.
-      }
-    }
-    return opened.sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
+    return pruneAndOpen(expected);
   }
 
   async function exportAttempt(attemptId, options = {}) {
@@ -330,12 +457,15 @@ export function createAttemptStore({
         `Attempt ${imported.attemptId} already exists. Choose overwrite explicitly to replace it.`,
       );
     }
-    await run("put", cloneJson(imported));
+    const record = cloneJson(imported);
+    assertRecordWithinPolicy(record);
+    await run("put", record);
+    await pruneAndOpen(options.compatibility ?? compatibility);
     return imported;
   }
 
   async function clearAttempts() {
-    await run("clear");
+    await runAcrossKnownAdapters("clear");
   }
 
   async function backend() {

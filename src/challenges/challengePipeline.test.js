@@ -105,7 +105,7 @@ describe("reviewed challenge promotion pipeline", () => {
 
     const credentialUrl = mutableCopy(readReviewedChallenge());
     credentialUrl.playerFacing.priorArt.cards[0].sourceUrl =
-      "https://example.test/patent?access_token=not-public";
+      "https://patents.google.com/patent/US1?access_token=not-public";
     expect(() => validateReviewedChallengeRecord(credentialUrl)).toThrow(
       /credential query parameters/iu,
     );
@@ -115,6 +115,32 @@ describe("reviewed challenge promotion pipeline", () => {
     expect(() => validateReviewedChallengeRecord(reviewPath)).toThrow(
       /local or confidential path/iu,
     );
+  });
+
+  it("rejects reviewed URLs whose parsed authority is not exactly approved", () => {
+    for (const unsafeUrl of [
+      "https://patents.google.com\n.evil.example/patent/US1",
+      "https://patents.google.com\r.evil.example/patent/US1",
+      "https://patents.google.com\t.evil.example/patent/US1",
+      "https://patents.google.com\\@evil.example/patent/US1",
+      "https://patents.google.com./patent/US1",
+      "https://patents.google.com:444/patent/US1",
+      "https://user@patents.google.com/patent/US1",
+      "https://patents.google.com.evil.example/patent/US1",
+      "https://xn--pple-43d.com/patent/US1",
+    ]) {
+      const record = mutableCopy(readReviewedChallenge());
+      record.playerFacing.priorArt.cards[0].sourceUrl = unsafeUrl;
+      expect(
+        () => validateReviewedChallengeRecord(record),
+        unsafeUrl,
+      ).toThrow(/control characters|backslashes|unapproved hostname|canonical|port|credentials/iu);
+    }
+
+    const approved = mutableCopy(readReviewedChallenge());
+    approved.playerFacing.priorArt.cards[0].sourceUrl =
+      "https://patents.google.com/patent/US20030107547A1/en";
+    expect(() => validateReviewedChallengeRecord(approved)).not.toThrow();
   });
 
   it("supports a non-mutating stale-output check", () => {
